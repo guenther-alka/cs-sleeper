@@ -4,11 +4,17 @@ package sysio
 
 import (
 	"bufio"
+	"context"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/guenther-alka/cs-sleeper/internal/xpath"
 )
+
+const bootDiskCmdTimeout = 15 * time.Second
 
 // NewReader returns the Linux /proc/diskstats reader.
 func NewReader() Reader { return linuxReader{} }
@@ -84,7 +90,10 @@ func hasDigitSuffix(s string) bool {
 // device (e.g. a ZFS or LVM root); that case is covered by the pool-based
 // fallback in the daemon.
 func BootDisks() []string {
-	out, err := exec.Command("findmnt", "-n", "-o", "SOURCE", "/").Output()
+	findmnt := xpath.Resolve("findmnt", "/bin/findmnt", "/usr/bin/findmnt", "/usr/sbin/findmnt")
+	ctx, cancel := context.WithTimeout(context.Background(), bootDiskCmdTimeout)
+	out, err := exec.CommandContext(ctx, findmnt, "-n", "-o", "SOURCE", "/").Output()
+	cancel()
 	if err != nil {
 		return nil
 	}
@@ -93,7 +102,11 @@ func BootDisks() []string {
 		return nil
 	}
 	dev := strings.TrimPrefix(src, "/dev/")
-	if pk, err := exec.Command("lsblk", "-ndo", "pkname", "/dev/"+dev).Output(); err == nil {
+	lsblk := xpath.Resolve("lsblk", "/bin/lsblk", "/usr/bin/lsblk")
+	ctx2, cancel2 := context.WithTimeout(context.Background(), bootDiskCmdTimeout)
+	pk, err := exec.CommandContext(ctx2, lsblk, "-ndo", "pkname", "/dev/"+dev).Output()
+	cancel2()
+	if err == nil {
 		if p := Normalize(strings.TrimSpace(string(pk))); p != "" {
 			return []string{p}
 		}

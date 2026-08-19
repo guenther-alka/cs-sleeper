@@ -4,15 +4,49 @@ package zfs
 
 import (
 	"bufio"
+	"context"
+	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/guenther-alka/cs-sleeper/internal/sysio"
+	"github.com/guenther-alka/cs-sleeper/internal/xpath"
 )
+
+// cmdTimeout bounds every zpool invocation. zpool import/export on a large or
+// degraded pool can legitimately take a while, but an unbounded call would
+// let one unresponsive device wedge the whole daemon loop indefinitely.
+const cmdTimeout = 90 * time.Second
+
+// zpoolPath resolves the zpool executable, preferring well-known absolute
+// install locations over a PATH search -- cs-sleeper normally runs as
+// root/Administrator, where PATH-only resolution risks executing a
+// look-alike binary planted earlier in PATH.
+func zpoolPath() string {
+	return xpath.Resolve("zpool",
+		"/sbin/zpool",
+		"/usr/sbin/zpool",
+		"/usr/local/sbin/zpool",
+		"/usr/local/bin/zpool",
+		"/usr/local/zfs/bin/zpool",
+		`C:\Program Files\OpenZFS On Windows\zpool.exe`,
+	)
+}
+
+func zpoolOutput(args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), cmdTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, zpoolPath(), args...).Output()
+	if ctx.Err() == context.DeadlineExceeded {
+		return out, fmt.Errorf("zpool %s: timed out after %s", strings.Join(args, " "), cmdTimeout)
+	}
+	return out, err
+}
 
 // Pools returns the names of imported pools.
 func Pools() ([]string, error) {
-	out, err := exec.Command("zpool", "list", "-H", "-o", "name").Output()
+	out, err := zpoolOutput("list", "-H", "-o", "name")
 	if err != nil {
 		return nil, err
 	}
@@ -35,6 +69,9 @@ func IsImported(pool string) (bool, error) {
 
 // Export exports pool (optionally forced).
 func Export(pool string, force bool) (string, error) {
+	if !sysio.Valid(pool) {
+		return "", fmt.Errorf("invalid pool name %q", pool)
+	}
 	args := []string{"export"}
 	if force {
 		args = append(args, "-f")
@@ -45,6 +82,9 @@ func Export(pool string, force bool) (string, error) {
 
 // Import imports pool (optionally forced).
 func Import(pool string, force bool) (string, error) {
+	if !sysio.Valid(pool) {
+		return "", fmt.Errorf("invalid pool name %q", pool)
+	}
 	args := []string{"import"}
 	if force {
 		args = append(args, "-f")
@@ -55,11 +95,19 @@ func Import(pool string, force bool) (string, error) {
 
 // Status returns human-readable `zpool status -P` output for pool.
 func Status(pool string) (string, error) {
+	if !sysio.Valid(pool) {
+		return "", fmt.Errorf("invalid pool name %q", pool)
+	}
 	return run("status", "-P", pool)
 }
 
 func run(args ...string) (string, error) {
-	out, err := exec.Command("zpool", args...).CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), cmdTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, zpoolPath(), args...).CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return string(out), fmt.Errorf("zpool %s: timed out after %s", strings.Join(args, " "), cmdTimeout)
+	}
 	return string(out), err
 }
 
@@ -80,9 +128,12 @@ func splitLines(s string) []string {
 // unsupported, e.g. illumos/Solaris). Flash devices are excluded so they are
 // never spun down.
 func DisksOfPool(pool string) ([]string, error) {
-	out, err := exec.Command("zpool", "status", "-P", "-L", pool).Output()
+	if !sysio.Valid(pool) {
+		return nil, fmt.Errorf("invalid pool name %q", pool)
+	}
+	out, err := zpoolOutput("status", "-P", "-L", pool)
 	if err != nil {
-		if out2, err2 := exec.Command("zpool", "status", "-P", pool).Output(); err2 == nil {
+		if out2, err2 := zpoolOutput("status", "-P", pool); err2 == nil {
 			data, _ := parseZpoolStatus(string(out2))
 			return data, nil
 		}
@@ -121,9 +172,12 @@ func DisksOfPoolSafe(pool string) []string {
 // class disks of pool -- flash devices that must never be spun down. It never
 // returns an error; unsupported hosts yield nil.
 func NeverSleepDisks(pool string) []string {
-	out, err := exec.Command("zpool", "status", "-P", "-L", pool).Output()
+	if !sysio.Valid(pool) {
+		return nil
+	}
+	out, err := zpoolOutput("status", "-P", "-L", pool)
 	if err != nil {
-		if out2, err2 := exec.Command("zpool", "status", "-P", pool).Output(); err2 == nil {
+		if out2, err2 := zpoolOutput("status", "-P", pool); err2 == nil {
 			_, flash := parseZpoolStatus(string(out2))
 			return flash
 		}
@@ -136,7 +190,7 @@ func NeverSleepDisks(pool string) []string {
 // BootPool returns the name of the pool whose `bootfs` property is set (the
 // pool that holds the OS root filesystem), or "" if none is found.
 func BootPool() (string, error) {
-	out, err := exec.Command("zpool", "list", "-H", "-o", "name,bootfs").Output()
+	out, err := zpoolOutput("list", "-H", "-o", "name,bootfs")
 	if err != nil {
 		return "", err
 	}

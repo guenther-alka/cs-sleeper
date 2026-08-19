@@ -4,10 +4,21 @@ package sysio
 
 import (
 	"bufio"
+	"context"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/guenther-alka/cs-sleeper/internal/xpath"
 )
+
+const bootDiskCmdTimeout = 20 * time.Second
+
+func powershellPath() string {
+	return xpath.Resolve("powershell",
+		`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`)
+}
 
 // NewReader returns the Windows performance-counter reader.
 func NewReader() Reader { return windowsReader{} }
@@ -28,7 +39,9 @@ func (windowsReader) Sample(window int) ([]Counter, error) {
 		"-SampleInterval " + strconv.Itoa(window) + " -MaxSamples 2 | " +
 		"Select-Object -ExpandProperty CounterSamples | ForEach-Object { " +
 		"$_.InstanceName + '|' + ($_.Path -split '\\\\')[-1] + '|' + $_.CookedValue }"
-	out, err := exec.Command("powershell", "-NoProfile", "-Command", script).Output()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(window)*time.Second*3+bootDiskCmdTimeout)
+	out, err := exec.CommandContext(ctx, powershellPath(), "-NoProfile", "-Command", script).Output()
+	cancel()
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +96,9 @@ func parseWinCounters(s string) []Counter {
 // BootDisks returns the PhysicalDisk that holds the system drive.
 func BootDisks() []string {
 	script := "$d = (Get-Partition -DriveLetter ($env:SystemDrive -replace ':', '')).DiskNumber; 'PhysicalDisk' + $d"
-	out, err := exec.Command("powershell", "-NoProfile", "-Command", script).Output()
+	ctx, cancel := context.WithTimeout(context.Background(), bootDiskCmdTimeout)
+	out, err := exec.CommandContext(ctx, powershellPath(), "-NoProfile", "-Command", script).Output()
+	cancel()
 	if err != nil {
 		return nil
 	}

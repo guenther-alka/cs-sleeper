@@ -2,11 +2,30 @@ package vm
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
+
+	"github.com/guenther-alka/cs-sleeper/internal/xpath"
 )
+
+// cmdTimeoutShort bounds read-only qm calls (list, config); cmdTimeoutLong
+// bounds state-changing calls (shutdown/suspend/start/resume), which may
+// legitimately take longer for a graceful guest shutdown but must still not
+// block the daemon forever if a VM hangs.
+const (
+	cmdTimeoutShort = 30 * time.Second
+	cmdTimeoutLong  = 120 * time.Second
+)
+
+// qmPath resolves the Proxmox qm executable, preferring its well-known
+// absolute install location over a PATH search (cs-sleeper runs as root).
+func qmPath() string {
+	return xpath.Resolve("qm", "/usr/sbin/qm", "/usr/bin/qm")
+}
 
 type proxmoxBackend struct {
 	action Action
@@ -20,7 +39,7 @@ func (p *proxmoxBackend) VMsOnPool(pool string) ([]VM, error) {
 	if err != nil {
 		return nil, err
 	}
-	out, err := exec.Command("qm", "list").Output()
+	out, err := qmOutput(cmdTimeoutShort, "list")
 	if err != nil {
 		return nil, fmt.Errorf("qm list: %w", err)
 	}
@@ -32,7 +51,7 @@ func (p *proxmoxBackend) VMsOnPool(pool string) ([]VM, error) {
 			continue
 		}
 		id := fields[0]
-		cfgOut, err := exec.Command("qm", "config", id).Output()
+		cfgOut, err := qmOutput(cmdTimeoutShort, "config", id)
 		if err != nil {
 			continue
 		}
@@ -49,17 +68,23 @@ func (p *proxmoxBackend) VMsOnPool(pool string) ([]VM, error) {
 }
 
 func (p *proxmoxBackend) Sleep(vmID string) error {
-	if p.action == ActionShutdown {
-		return run("qm", "shutdown", vmID)
+	if !isNumeric(vmID) {
+		return fmt.Errorf("invalid VM id %q", vmID)
 	}
-	return run("qm", "suspend", vmID, "--todisk")
+	if p.action == ActionShutdown {
+		return run(cmdTimeoutLong, "shutdown", vmID)
+	}
+	return run(cmdTimeoutLong, "suspend", vmID, "--todisk")
 }
 
 func (p *proxmoxBackend) Wake(vmID string) error {
-	if p.action == ActionShutdown {
-		return run("qm", "start", vmID)
+	if !isNumeric(vmID) {
+		return fmt.Errorf("invalid VM id %q", vmID)
 	}
-	return run("qm", "resume", vmID)
+	if p.action == ActionShutdown {
+		return run(cmdTimeoutLong, "start", vmID)
+	}
+	return run(cmdTimeoutLong, "resume", vmID)
 }
 
 // storagePools parses /etc/pve/storage.cfg and returns storage -> pool.
@@ -139,10 +164,27 @@ func vmName(cfg string) string {
 	return ""
 }
 
-func run(name string, args ...string) error {
-	out, err := exec.Command(name, args...).CombinedOutput()
+// qmOutput runs `qm <args...>` with a timeout and returns its stdout.
+func qmOutput(timeout time.Duration, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, qmPath(), args...).Output()
+	if ctx.Err() == context.DeadlineExceeded {
+		return out, fmt.Errorf("qm %s: timed out after %s", strings.Join(args, " "), timeout)
+	}
+	return out, err
+}
+
+// run runs `qm <args...>` with a timeout, returning combined output on error.
+func run(timeout time.Duration, args ...string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, qmPath(), args...).CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("qm %s: timed out after %s", strings.Join(args, " "), timeout)
+	}
 	if err != nil {
-		return fmt.Errorf("%s %s: %w (%s)", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("qm %s: %w (%s)", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

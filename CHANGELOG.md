@@ -3,6 +3,35 @@
 All notable changes to cs-sleeper are documented here. Versions follow
 `v<major>.<minor>.<patch>`; see the git tags for the full history.
 
+## v1.1.0-rc3 (2026-08-19) — Release Candidate
+
+Security/robustness follow-up to the rc2 review, implementing all five
+recommendations:
+
+- **Safety-net gap closed:** `sleepnow`, `sleeppool` and `export-now` now all
+  refuse to touch the never-sleep set (OS boot disk, boot pool disks, SLOG/
+  L2ARC/special/dedup flash devices, `exclude`) -- previously this was only
+  enforced by the continuous daemon loop. `sleeppool`/`export-now` also
+  refuse outright when the given `--pool` is the boot pool.
+- **External tools resolved via fixed paths first:** `smartctl`, `zpool`,
+  `qm`, `pgrep`, `iostat`, `findmnt`, `lsblk`, `df`, `diskutil`, `sync`,
+  `powershell`, `taskkill` and `tasklist` are now looked up in well-known
+  absolute install locations before falling back to a `$PATH` search
+  (new `internal/xpath` package), closing a PATH-hijack risk given
+  cs-sleeper normally runs as root/Administrator.
+- **Disk/pool name validation:** `sysio.Valid` rejects names starting with
+  `-` before they reach `smartctl`/`zpool` as a bare CLI argument (the
+  Windows `DevicePath` path had no such guard before).
+- **Timeouts everywhere:** every external command invocation (`zpool`, `qm`,
+  `iostat`/`Get-Counter`, `pgrep`, `findmnt`/`lsblk`, `df`/`diskutil`,
+  `sync`, `taskkill`/`tasklist`) now runs under a `context`-based timeout,
+  not just `smartctl` as before -- an unresponsive device or tool can no
+  longer wedge the daemon loop indefinitely.
+- **Release integrity:** the release workflow now publishes a
+  `checksums.txt` (SHA-256) alongside the `.tar.gz` archives, and all
+  GitHub Actions steps are pinned to a commit SHA (with the version as a
+  comment) instead of a floating major-version tag.
+
 ## v1.1.0-rc2 (2026-08-19) — Release Candidate
 
 - `wake = on-access` now logs/tracks disks that wake on access (shown as

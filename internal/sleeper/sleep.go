@@ -3,29 +3,38 @@ package sleeper
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/guenther-alka/cs-sleeper/internal/sysio"
+	"github.com/guenther-alka/cs-sleeper/internal/xpath"
 )
 
 const cmdTimeout = 30 * time.Second
 
 // Sleep spins a device down immediately via smartctl standby,now.
 func Sleep(device string) (string, error) {
+	if !sysio.Valid(device) {
+		return "", fmt.Errorf("invalid device name %q", device)
+	}
 	return run("smartctl", "-s", "standby,now", sysio.DevicePath(device))
 }
 
 // Wake spins a device up via smartctl -s on.
 func Wake(device string) (string, error) {
+	if !sysio.Valid(device) {
+		return "", fmt.Errorf("invalid device name %q", device)
+	}
 	return run("smartctl", "-s", "on", sysio.DevicePath(device))
 }
 
 // SetStandbyTimer sets the drive-internal standby timer (minutes).
 func SetStandbyTimer(device string, minutes int) (string, error) {
+	if !sysio.Valid(device) {
+		return "", fmt.Errorf("invalid device name %q", device)
+	}
 	return run("smartctl", "-s", "standby,"+strconv.Itoa(minutes), sysio.DevicePath(device))
 }
 
@@ -43,26 +52,25 @@ func run(name string, args ...string) (string, error) {
 	return string(out), err
 }
 
-// smartctlPath resolves the smartctl executable. It prefers the PATH lookup but
-// falls back to common absolute locations: the standard smartmontools macOS
-// installer puts smartctl in /usr/local/sbin, which is not on the default PATH
-// used by daemons, launchd and non-interactive SSH sessions.
+// smartctlPath resolves the smartctl executable. It prefers well-known
+// absolute install locations over a PATH search -- cs-sleeper normally runs
+// as root/Administrator, so resolving purely via $PATH would let a writable
+// directory earlier in PATH shadow the real binary. The standard
+// smartmontools macOS installer puts smartctl in /usr/local/sbin, which is
+// not on the default PATH used by daemons, launchd and non-interactive SSH
+// sessions -- hence it (and the other common locations) are checked before
+// falling back to a plain PATH lookup.
 func smartctlPath() string {
-	if p, err := exec.LookPath("smartctl"); err == nil {
-		return p
-	}
-	for _, p := range []string{
+	return xpath.Resolve("smartctl",
 		"/usr/local/sbin/smartctl",
 		"/opt/local/sbin/smartctl",
 		"/opt/homebrew/sbin/smartctl",
 		"/usr/sbin/smartctl",
 		"/sbin/smartctl",
-	} {
-		if st, err := os.Stat(p); err == nil && !st.IsDir() {
-			return p
-		}
-	}
-	return "smartctl"
+		"/usr/bin/smartctl",
+		`C:\Program Files\smartmontools\bin\smartctl.exe`,
+		`C:\Program Files (x86)\smartmontools\bin\smartctl.exe`,
+	)
 }
 
 // SleepAll spins a set of devices down, running at most `parallel` smartctl
@@ -94,6 +102,12 @@ func spinAll(devices []string, parallel int, sub string) []error {
 		wg.Add(1)
 		go func(dev string) {
 			defer wg.Done()
+			if !sysio.Valid(dev) {
+				mu.Lock()
+				errs = append(errs, fmt.Errorf("%s: invalid device name", dev))
+				mu.Unlock()
+				return
+			}
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			if _, err := run("smartctl", "-s", sub, sysio.DevicePath(dev)); err != nil {

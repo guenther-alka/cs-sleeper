@@ -13,7 +13,7 @@ disk down/up and to export/import a whole pool.
 run on ZFS hosts: Linux, illumos, Solaris, FreeBSD and macOS (plus Windows as a
 smartctl-only target).
 
-> **Status:** `v1.1.0-rc2` is a **release candidate** (pre-release). Prebuilt
+> **Status:** `v1.1.0-rc3` is a **release candidate** (pre-release). Prebuilt
 > binaries are available on the
 > [GitHub Releases](https://github.com/guenther-alka/cs-sleeper/releases) page.
 
@@ -99,6 +99,13 @@ For a manual install, copy the binary for your platform to a location in
 
 ```sh
 chmod +x /usr/local/bin/cs-sleeper
+```
+
+Every release also publishes a `checksums.txt` (SHA-256) alongside the
+`.tar.gz` archives; verify a download against it before installing:
+
+```sh
+sha256sum -c checksums.txt --ignore-missing
 ```
 
 The napp-it backend expects the tool under
@@ -275,7 +282,11 @@ Notes:
    `-f` to `zpool` when `--force` is given, and refuse while replication runs.
 6. **Never-sleep set** — the OS boot disk, the boot pool's disks, and SLOG/
    L2ARC/special/dedup flash devices are never spun down, in addition to
-   everything listed in `exclude`.
+   everything listed in `exclude`. This is enforced for **every** command
+   that can put a disk to standby or export a pool -- `sleepnow`,
+   `sleeppool`, `export-now` and the continuous daemon loop alike -- not
+   only the daemon; `sleeppool`/`export-now` additionally refuse outright if
+   the given pool is the boot pool itself.
 7. **Flush before standby** — `sleeppool` runs `zpool sync <pool>` (POSIX
    `sync` on illumos/Solaris) before spinning disks down, then re-samples disk
    I/O and skips any disk that became active during the flush. This commits
@@ -287,6 +298,14 @@ Notes:
    minutes of inactivity, far longer than the ~5 s transaction-group commit —
    so any buffered write would already have hit the disk and reset the idle
    timer.
+
+8. **Hardened external-command handling** — `smartctl`, `zpool`, `qm`,
+   `iostat` and the other helper tools are resolved via well-known absolute
+   install paths first and a `$PATH` search only as a fallback, since
+   cs-sleeper normally runs as root/Administrator; every external command
+   call runs under a timeout so an unresponsive device or tool cannot wedge
+   the daemon indefinitely; and disk/pool names are validated before being
+   passed on as command-line arguments.
 
 Caveat: `smartctl` spin-down on some controllers needs extra `-d` options
 (for example USB or specific HBAs). If `smartctl` fails, the error is logged

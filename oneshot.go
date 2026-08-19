@@ -24,12 +24,17 @@ func diskCmd(args []string, action string) {
 		fmt.Fprintln(os.Stderr, "error: --disk is required")
 		os.Exit(2)
 	}
-	if _, err := loadConfig(*configPath); err != nil {
+	cfg, err := loadConfig(*configPath)
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
 
 	if action == "sleep" {
+		if err := guardDevice(cfg, *disk); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
 		if rep := replcheck.Check(); rep.Active {
 			fmt.Fprintf(os.Stderr, "refusing to sleep %s: zfs send/receive in flight\n", *disk)
 			os.Exit(1)
@@ -37,7 +42,6 @@ func diskCmd(args []string, action string) {
 	}
 
 	var out string
-	var err error
 	if action == "sleep" {
 		out, err = sleeper.Sleep(*disk)
 	} else {
@@ -68,6 +72,10 @@ func poolCmd(args []string, action string) {
 	}
 
 	if action == "export" {
+		if err := guardBootPool(*pool); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
 		if rep := replcheck.Check(); rep.Active {
 			fmt.Fprintf(os.Stderr, "refusing to export %s: zfs send/receive in flight\n", *pool)
 			os.Exit(1)

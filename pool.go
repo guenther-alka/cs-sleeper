@@ -19,12 +19,25 @@ import (
 // then either exports the pool (backup pools) or spins its disks to standby
 // (active pools, pool stays imported).
 func execSleepPool(cfg *Config, pool string, export, includeVM, force bool, logger *log.Logger) error {
+	if err := guardBootPool(pool); err != nil {
+		return err
+	}
 	if rep := replcheck.Check(); rep.Active {
 		return fmt.Errorf("zfs send/receive in flight")
 	}
 	disks, err := zfs.DisksOfPool(pool)
 	if err != nil {
 		return fmt.Errorf("cannot resolve pool disks: %w", err)
+	}
+	// Defense in depth: also drop any disk that is separately protected
+	// (exclude list, OS boot disk, or a boot-pool member resolved another
+	// way), even though guardBootPool above already refuses the boot pool
+	// itself by name.
+	if protected := neverSleepSet(cfg); len(protected) > 0 {
+		if filtered := excludeDevices(disks, protected); len(filtered) != len(disks) {
+			logger.Printf("sleeppool %s: %d disk(s) protected, skipped", pool, len(disks)-len(filtered))
+			disks = filtered
+		}
 	}
 	if includeVM {
 		ids, err := vmSleep(cfg, pool, logger)

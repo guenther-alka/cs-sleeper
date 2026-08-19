@@ -4,10 +4,24 @@ package sysio
 
 import (
 	"bufio"
+	"context"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/guenther-alka/cs-sleeper/internal/xpath"
 )
+
+const bootDiskCmdTimeout = 15 * time.Second
+
+func iostatPath() string {
+	return xpath.Resolve("iostat", "/usr/bin/iostat", "/usr/sbin/iostat", "/bin/iostat")
+}
+
+func dfPath() string {
+	return xpath.Resolve("df", "/usr/bin/df", "/bin/df")
+}
 
 // NewReader returns the illumos/Solaris iostat-based reader.
 func NewReader() Reader { return solarisReader{} }
@@ -28,7 +42,9 @@ func (solarisReader) Sample(window int) ([]Counter, error) {
 	if window < 1 {
 		window = 1
 	}
-	out, err := exec.Command("iostat", "-xn", strconv.Itoa(window), "2").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(window)*time.Second*3+bootDiskCmdTimeout)
+	out, err := exec.CommandContext(ctx, iostatPath(), "-xn", strconv.Itoa(window), "2").Output()
+	cancel()
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +87,9 @@ func parseSolarisIostat(s string) []Counter {
 // resolved via `df /`. A ZFS root (rpool/...) yields nil; that case is covered
 // by the pool-based fallback in the daemon.
 func BootDisks() []string {
-	out, err := exec.Command("df", "/").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), bootDiskCmdTimeout)
+	out, err := exec.CommandContext(ctx, dfPath(), "/").Output()
+	cancel()
 	if err != nil {
 		return nil
 	}

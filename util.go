@@ -42,15 +42,17 @@ func acquireLock(pidFile string) error {
 	return os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0o644)
 }
 
-// managedDevices returns the normalized list of devices to manage: the union
-// of the free disks listed in `disks` and the member disks of the configured
-// `pools` (resolved via zpool status), minus `exclude`.
-func managedDevices(cfg *Config) []string {
+// neverSleepSet returns the normalized set of devices that must never be
+// slept or exported: the configured `exclude` list, the OS boot disk(s), and
+// the boot pool's member disks. This is the single source of truth for the
+// "never-sleep" guarantee documented in README.md; every command that can
+// put a disk to standby or export a pool -- not just the continuous daemon
+// loop -- must consult it (see guardDevice/guardBootPool below).
+func neverSleepSet(cfg *Config) map[string]bool {
 	excl := make(map[string]bool, len(cfg.Exclude))
 	for _, e := range cfg.Exclude {
 		excl[sysio.Normalize(e)] = true
 	}
-	// Never sleep the OS boot disk(s) or the disks of the boot pool.
 	for _, d := range sysio.BootDisks() {
 		excl[d] = true
 	}
@@ -59,6 +61,46 @@ func managedDevices(cfg *Config) []string {
 			excl[d] = true
 		}
 	}
+	return excl
+}
+
+// guardDevice refuses to act on device if it is in the never-sleep set
+// (exclude list, OS boot disk, or a boot-pool member disk).
+func guardDevice(cfg *Config, device string) error {
+	if neverSleepSet(cfg)[sysio.Normalize(device)] {
+		return fmt.Errorf("refusing to act on %s: protected (boot disk, boot pool member, or in exclude list)", device)
+	}
+	return nil
+}
+
+// guardBootPool refuses an action on pool if it is the boot pool: exporting
+// it, or standby-ing its disks, would take the running OS down with it.
+func guardBootPool(pool string) error {
+	if bp, err := zfs.BootPool(); err == nil && bp != "" && bp == pool {
+		return fmt.Errorf("refusing to act on pool %q: it is the boot pool", pool)
+	}
+	return nil
+}
+
+// excludeDevices returns list with every device present in excl removed.
+func excludeDevices(list []string, excl map[string]bool) []string {
+	if len(excl) == 0 {
+		return list
+	}
+	out := make([]string, 0, len(list))
+	for _, d := range list {
+		if !excl[d] {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// managedDevices returns the normalized list of devices to manage: the union
+// of the free disks listed in `disks` and the member disks of the configured
+// `pools` (resolved via zpool status), minus the never-sleep set.
+func managedDevices(cfg *Config) []string {
+	excl := neverSleepSet(cfg)
 	seen := make(map[string]bool)
 	var out []string
 	add := func(name string) {

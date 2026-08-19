@@ -67,6 +67,16 @@ func Normalize(name string) string {
 
 func isDigit(c byte) bool { return c >= '0' && c <= '9' }
 
+// Valid reports whether a device or pool name is safe to pass as a bare
+// command-line argument to an external tool (smartctl, zpool): it must be
+// non-empty and must not start with '-', which those tools would otherwise
+// parse as an option rather than as a name. This is a defense-in-depth check
+// against a malformed or attacker-influenced name (e.g. forwarded unchecked
+// from a web form) altering the invoked command's behavior.
+func Valid(name string) bool {
+	return name != "" && name[0] != '-'
+}
+
 // looksDevice reports whether a token looks like a disk device name (contains
 // at least one letter and one digit, e.g. sda, ada0, c2t1d0, disk0).
 func looksDevice(s string) bool {

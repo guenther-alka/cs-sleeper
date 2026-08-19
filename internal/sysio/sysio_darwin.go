@@ -3,10 +3,24 @@
 package sysio
 
 import (
+	"context"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/guenther-alka/cs-sleeper/internal/xpath"
 )
+
+const bootDiskCmdTimeout = 15 * time.Second
+
+func iostatPath() string {
+	return xpath.Resolve("iostat", "/usr/sbin/iostat", "/usr/bin/iostat")
+}
+
+func diskutilPath() string {
+	return xpath.Resolve("diskutil", "/usr/sbin/diskutil")
+}
 
 // NewReader returns the macOS iostat-based reader.
 func NewReader() Reader { return darwinReader{} }
@@ -27,7 +41,9 @@ func (darwinReader) Sample(window int) ([]Counter, error) {
 	if window < 1 {
 		window = 1
 	}
-	out, err := exec.Command("iostat", "-d", "-w", strconv.Itoa(window), "-c", "2").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(window)*time.Second*3+bootDiskCmdTimeout)
+	out, err := exec.CommandContext(ctx, iostatPath(), "-d", "-w", strconv.Itoa(window), "-c", "2").Output()
+	cancel()
 	if err != nil {
 		return nil, err
 	}
@@ -39,7 +55,9 @@ func (darwinReader) Sample(window int) ([]Counter, error) {
 // container, so the physical store is used instead (e.g. /dev/disk3s5s1 ->
 // disk2).
 func BootDisks() []string {
-	out, err := exec.Command("diskutil", "info", "/").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), bootDiskCmdTimeout)
+	out, err := exec.CommandContext(ctx, diskutilPath(), "info", "/").Output()
+	cancel()
 	if err != nil {
 		return nil
 	}

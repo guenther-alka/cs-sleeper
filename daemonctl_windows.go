@@ -3,11 +3,15 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
+
+	"github.com/guenther-alka/cs-sleeper/internal/xpath"
 )
 
 const (
@@ -42,5 +46,8 @@ func stopDaemon(pidFile string) error {
 	if pid <= 0 || !processAlive(pid) {
 		return nil
 	}
-	return exec.Command("taskkill", "/PID", strconv.Itoa(pid), "/T", "/F").Run()
+	taskkill := xpath.Resolve("taskkill", `C:\Windows\System32\taskkill.exe`)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, taskkill, "/PID", strconv.Itoa(pid), "/T", "/F").Run()
 }
