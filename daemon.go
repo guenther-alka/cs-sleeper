@@ -52,7 +52,7 @@ func daemonCmd(args []string) {
 	logger.Printf("cs-sleeper %s starting: %d device(s) managed: %s",
 		version, len(devices), strings.Join(devices, ","))
 	if len(devices) == 0 {
-		logger.Printf("no devices configured (hd = ...); exiting")
+		logger.Printf("no devices configured (disks/pools = ...); exiting")
 		os.Exit(0)
 	}
 
@@ -76,12 +76,29 @@ func daemonCmd(args []string) {
 	if interval <= 0 {
 		interval = time.Second
 	}
+	rescan := time.Duration(cfg.PoolRescan) * time.Second
+	if rescan <= 0 {
+		rescan = 60 * time.Second
+	}
+	lastRescan := time.Now()
 
 	prev := sample(reader, cfg.Interval)
 	for {
 		start := time.Now()
 		cur := sample(reader, cfg.Interval)
 		now := time.Now()
+
+		// Periodically re-resolve pool disks to pick up replacements.
+		if now.Sub(lastRescan) >= rescan {
+			lastRescan = now
+			if nd := managedDevices(cfg); !sameStringSet(nd, devices) {
+				logger.Printf("device set changed: %s -> %s", strings.Join(devices, ","), strings.Join(nd, ","))
+				devices = nd
+				engine = sleeper.NewEngine(devices, opt)
+				prev = sample(reader, cfg.Interval)
+			}
+		}
+
 		rep := replcheck.Check()
 
 		for _, d := range engine.Update(activeSet(prev, cur, devices), now) {
@@ -96,6 +113,8 @@ func daemonCmd(args []string) {
 				logger.Printf("sleep %s -> standby (%s)", d, strings.TrimSpace(out))
 			}
 		}
+
+		runDueTasks(cfg, logger)
 
 		writeState(cfg, engine, now, rep, logger)
 

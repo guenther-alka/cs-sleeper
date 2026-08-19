@@ -5,6 +5,7 @@ package sysio
 import (
 	"bufio"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 )
@@ -76,4 +77,29 @@ func hasDigitSuffix(s string) bool {
 	}
 	c := s[len(s)-1]
 	return c >= '0' && c <= '9'
+}
+
+// BootDisks returns the whole physical disk that holds the root filesystem,
+// resolved via findmnt + lsblk. It returns nil when / is not on a plain block
+// device (e.g. a ZFS or LVM root); that case is covered by the pool-based
+// fallback in the daemon.
+func BootDisks() []string {
+	out, err := exec.Command("findmnt", "-n", "-o", "SOURCE", "/").Output()
+	if err != nil {
+		return nil
+	}
+	src := strings.TrimSpace(string(out))
+	if src == "" || !strings.HasPrefix(src, "/dev/") {
+		return nil
+	}
+	dev := strings.TrimPrefix(src, "/dev/")
+	if pk, err := exec.Command("lsblk", "-ndo", "pkname", "/dev/"+dev).Output(); err == nil {
+		if p := Normalize(strings.TrimSpace(string(pk))); p != "" {
+			return []string{p}
+		}
+	}
+	if n := Normalize(dev); n != "" {
+		return []string{n}
+	}
+	return nil
 }

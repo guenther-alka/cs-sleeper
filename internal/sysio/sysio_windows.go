@@ -79,3 +79,16 @@ func parseWinCounters(s string) []Counter {
 	}
 	return out
 }
+
+// BootDisks returns the PhysicalDisk that holds the system drive.
+func BootDisks() []string {
+	script := "$d = (Get-Partition -DriveLetter ($env:SystemDrive -replace ':', '')).DiskNumber; 'PhysicalDisk' + $d"
+	out, err := exec.Command("powershell", "-NoProfile", "-Command", script).Output()
+	if err != nil {
+		return nil
+	}
+	if n := Normalize(strings.TrimSpace(string(out))); n != "" {
+		return []string{n}
+	}
+	return nil
+}

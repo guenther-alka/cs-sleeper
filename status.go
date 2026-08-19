@@ -34,7 +34,6 @@ func statusCmd(args []string) {
 
 	devices := managedDevices(cfg)
 	rep := replcheck.Check()
-	pools, _ := zfs.Pools()
 
 	fmt.Println("cs-sleeper " + version)
 	fmt.Println()
@@ -42,9 +41,23 @@ func statusCmd(args []string) {
 		cfg.Enabled, cfg.Wait, cfg.Interval, cfg.Policy, cfg.Wake, cfg.StandbyMin, cfg.VerifyIdle)
 	fmt.Printf("managed disks: %s\n", strings.Join(devices, ","))
 	fmt.Printf("exclude:       %s\n", strings.Join(cfg.Exclude, ","))
-	fmt.Printf("pools:         %s\n", strings.Join(cfg.Pools, ","))
 	fmt.Printf("replication in flight: %v\n", rep.Active)
-	fmt.Printf("imported pools: %s\n", strings.Join(pools, ","))
+	fmt.Println()
+	fmt.Printf("%-16s %-12s %s\n", "pool", "state", "disks")
+	for _, p := range cfg.Pools {
+		imported, _ := zfs.IsImported(p)
+		state := "not-imported"
+		if imported {
+			state = "imported"
+		}
+		data := zfs.DisksOfPoolSafe(p)
+		flash := zfs.NeverSleepDisks(p)
+		line := strings.Join(data, ",")
+		if len(flash) > 0 {
+			line += "  (flash: " + strings.Join(flash, ",") + ")"
+		}
+		fmt.Printf("%-16s %-12s %s\n", p, state, line)
+	}
 	fmt.Println()
 
 	st := readStateFile(cfg)
@@ -69,6 +82,13 @@ func statusCmd(args []string) {
 	fmt.Printf("%-16s %-8s %-12s %-12s\n", "device", "active", "read-ops", "write-ops")
 	for _, d := range devices {
 		fmt.Printf("%-16s %-8v %-12d %-12d\n", d, sysio.Active(first[d], second[d]), second[d].ReadIO, second[d].WriteIO)
+	}
+
+	if tasks, err := loadSchedule(cfg); err == nil && len(tasks) > 0 {
+		fmt.Println("scheduled tasks:")
+		for _, t := range tasks {
+			fmt.Printf("  %-9s %-16s at %s\n", t.Kind, t.Pool, t.At.Format("2006-01-02 15:04"))
+		}
 	}
 }
 
@@ -96,6 +116,9 @@ func printStatusJSON(cfg *Config) {
 	}
 	if st := readStateFile(cfg); st != nil {
 		out["state"] = st
+	}
+	if tasks, err := loadSchedule(cfg); err == nil && len(tasks) > 0 {
+		out["schedule"] = tasks
 	}
 	b, _ := json.MarshalIndent(out, "", "  ")
 	fmt.Println(string(b))

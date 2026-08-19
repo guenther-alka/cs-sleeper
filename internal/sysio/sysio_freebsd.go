@@ -68,3 +68,25 @@ func parseFreeBSDIostat(s string) []Counter {
 	}
 	return out
 }
+
+// BootDisks returns the whole physical disk that holds the root filesystem,
+// resolved via `df /`. A ZFS root (zroot/...) yields nil; that case is covered
+// by the pool-based fallback in the daemon.
+func BootDisks() []string {
+	out, err := exec.Command("df", "/").Output()
+	if err != nil {
+		return nil
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) < 2 {
+		return nil
+	}
+	fields := strings.Fields(lines[len(lines)-1])
+	if len(fields) == 0 || !strings.HasPrefix(fields[0], "/dev/") {
+		return nil
+	}
+	if n := Normalize(fields[0]); n != "" {
+		return []string{n}
+	}
+	return nil
+}

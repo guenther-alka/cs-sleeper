@@ -10,8 +10,12 @@ never interrupted. It also ships guarded one-shot commands to spin a single
 disk down/up and to export/import a whole pool.
 
 `cs-sleeper` is part of the napp-it / csweb-gui tool family and is designed to
-run on ZFS hosts: Linux, illumos, Solaris, FreeBSD (and Windows as a
+run on ZFS hosts: Linux, illumos, Solaris, FreeBSD and macOS (plus Windows as a
 smartctl-only target).
+
+> **Status:** `v1.1.0-rc1` is a **release candidate** (pre-release). Prebuilt
+> binaries are available on the
+> [GitHub Releases](https://github.com/guenther-alka/cs-sleeper/releases) page.
 
 ---
 
@@ -36,7 +40,7 @@ smartctl-only target).
 The daemon samples per-disk I/O once per `interval` (default 5 s):
 
 1. It detects activity by comparing successive counters (Linux) or by reading
-   the interval rate (illumos/Solaris/FreeBSD/Windows).
+   the interval rate (illumos/Solaris/FreeBSD/macOS/Windows).
 2. A disk that shows no I/O accumulates idle time; once it has been idle for
    `wait` seconds and has passed `verify-idle` consecutive idle re-checks, the
    daemon issues `smartctl -s standby,now` to spin it down.
@@ -45,6 +49,10 @@ The daemon samples per-disk I/O once per `interval` (default 5 s):
    replication are expected to run).
 4. Before sleeping, and before any `export-now`, the daemon checks for a
    running `zfs send`/`receive`; if one is found, the action is skipped.
+5. `sleeppool` flushes pending writes (`zpool sync`, or POSIX `sync` on
+   illumos/Solaris) before spinning a pool's disks down and re-samples disk I/O
+   to skip any disk that became active during the flush, so they stay asleep;
+   `zpool export` already flushes, so the export path needs no extra sync.
 
 As a belt-and-suspenders fallback the daemon also sets the drive-internal
 standby timer (`smartctl -s standby,<standby-min>`) at startup, so disks still
@@ -58,7 +66,10 @@ spin down on their own even if the daemon is stopped.
 ## Requirements
 
 - A supported OS (see [Platform matrix](#platform-matrix)).
-- `smartctl` (smartmontools) in `PATH`, with root/administrator privileges.
+- `smartctl` (smartmontools) in `PATH`, with root/administrator privileges. On
+  macOS (and any host where smartctl lives outside `PATH`) cs-sleeper also
+  checks `/usr/local/sbin`, `/opt/local/sbin`, `/opt/homebrew/sbin`,
+  `/usr/sbin` and `/sbin`.
 - `zpool` and `zfs` in `PATH` on the managed host (for the replication safety
   gate and the import/export commands).
 - No other runtime dependencies; the binary is fully static
@@ -68,8 +79,9 @@ spin down on their own even if the daemon is stopped.
 
 ## Installation
 
-Prebuilt binaries are attached to every GitHub release. The layout mirrors the
-other napp-it tools so the csweb-gui web interface can download them:
+Prebuilt binaries are attached to every
+[GitHub release](https://github.com/guenther-alka/cs-sleeper/releases). The layout
+mirrors the other napp-it tools so the csweb-gui web interface can download them:
 
 ```
 cs-sleeper-mswin.amd64.tar.gz      -> mswin.amd64/cs-sleeper.exe
@@ -117,6 +129,8 @@ cs-sleeper status
 # 6. Manual control.
 cs-sleeper sleepnow  --disk sda
 cs-sleeper wakeupnow --disk sda
+cs-sleeper sleeppool --pool tank
+cs-sleeper wakepool  --pool tank
 cs-sleeper export-now --pool tank
 cs-sleeper import-now --pool tank
 ```
@@ -138,16 +152,18 @@ ignored. Boolean values accept `yes/no`, `true/false`, `on/off`, `1/0`.
 | `enabled`    | `yes`                   | Whether the daemon runs at all. `no` makes `daemon` exit immediately.   |
 | `hd`         | *(empty)*               | Comma-separated disks to manage (device names, see Platform matrix).     |
 | `exclude`    | *(empty)*               | Comma-separated disks to never touch.                                    |
-| `pools`      | *(empty)*               | Pools considered for import/export safety (informational).               |
+| `pools`      | *(empty)*               | Pools whose member disks are managed (via `zpool status`).                |
 | `activity`   | *(empty)*               | Comma-separated hour ranges `H-H` (0-23, may cross midnight). Sleep is   |
 |              |                         | allowed **only outside** these windows. Empty = sleep anytime.           |
 | `wait`       | `600`                   | Seconds a disk must be idle before it is put to sleep.                   |
 | `interval`   | `5`                     | Sampling interval in seconds.                                            |
-| `policy`     | `standby`               | Sleep policy. Only `standby` (smartctl spin-down) is implemented in v1.0.|
+| `policy`     | `standby`               | Sleep policy. Only `standby` (smartctl spin-down) is implemented.         |
 | `standby-min`| `10`                    | Drive-internal standby timer (minutes) set at daemon start as fallback.  |
 | `wake`       | `on-access`             | `on-access` (track wake-ups) or `manual` (use `wakeupnow`).              |
 | `parallel`   | `4`                     | Max concurrent sleep/wake operations.                                    |
 | `verify-idle`| `5`                     | Consecutive idle samples required (after `wait`) before sleeping.        |
+| `vm-mode`    | `off`                   | `off` \| `proxmox_suspend` \| `proxmox_shutdown` (VM handling on sleep).  |
+| `pool-rescan`| `60`                    | Seconds between pool disk re-resolution in the daemon.                    |
 | `state-dir`  | `/var/run/cs-sleeper`   | Directory for the pid file and `state.json`.                             |
 | `log-file`   | `/var/log/cs-sleeper.log` | Daemon log file.                                                       |
 | `log-level`  | `info`                  | `debug` / `info` / `warn` / `error`.                                     |
@@ -168,6 +184,8 @@ standby-min= 10
 wake       = on-access
 parallel   = 4
 verify-idle= 5
+vm-mode    = off
+pool-rescan= 60
 ```
 
 ---
@@ -177,8 +195,12 @@ verify-idle= 5
 ```
 cs-sleeper daemon [--config PATH] [--foreground] [--once]
 cs-sleeper status [--config PATH] [--json]
+cs-sleeper enable   [--config PATH]
+cs-sleeper disable  [--config PATH]
 cs-sleeper sleepnow  --disk NAME [--config PATH]
 cs-sleeper wakeupnow --disk NAME [--config PATH]
+cs-sleeper sleeppool --pool NAME [--export] [--include-vm] [--at now|HH:MM] [--force]
+cs-sleeper wakepool  --pool NAME [--include-vm] [--at now|HH:MM] [--force]
 cs-sleeper import-now --pool NAME [--config PATH] [--force]
 cs-sleeper export-now --pool NAME [--config PATH] [--force]
 cs-sleeper version
@@ -187,9 +209,13 @@ cs-sleeper version
 | Command     | Flags                    | Description                                                          |
 |-------------|--------------------------|----------------------------------------------------------------------|
 | `daemon`    | `--config`, `--foreground`, `--once` | Idle-detection loop. Background by default; `--foreground` logs to stdout; `--once` runs one sample and exits (diagnostics). |
-| `status`    | `--config`, `--json`     | One-shot report: config, managed disks, daemon state, live I/O sample. `--json` emits machine-readable JSON. |
+| `status`    | `--config`, `--json`     | One-shot report: config, pools, managed disks, daemon state, live I/O sample. `--json` emits machine-readable JSON. |
+| `enable`    | `--config`               | Persist `enabled=yes` and start the daemon.                          |
+| `disable`   | `--config`               | Persist `enabled=no` and stop the daemon.                            |
 | `sleepnow`  | `--disk`, `--config`     | Spin one disk down immediately; refused while `zfs send/receive` runs. |
 | `wakeupnow` | `--disk`, `--config`     | Spin one disk up immediately.                                         |
+| `sleeppool` | `--pool`, `--export`, `--include-vm`, `--at`, `--force` | Put a whole pool to sleep (standby, or `--export` for backup pools). Flushes pending writes before standby. |
+| `wakepool`  | `--pool`, `--include-vm`, `--at`, `--force` | Wake a pool (import if needed) and optionally its VMs.      |
 | `import-now`| `--pool`, `--config`, `--force` | Import one pool (`zpool import`).                                |
 | `export-now`| `--pool`, `--config`, `--force` | Export one pool (`zpool export`); refused while replication runs. |
 | `version`   |                          | Print the version string.                                             |
@@ -209,7 +235,7 @@ live view.
 | Solaris   | `c2t1d0`               | `iostat -xn <n> 2` (rate)     | `smartctl ... /dev/rdsk/<name>s2` |
 | FreeBSD   | `ada0`, `da0`          | `iostat -x -w <n> -c 2` (rate)| `smartctl -s standby,now /dev/<name>` |
 | Windows   | `PhysicalDisk0`        | PowerShell `Get-Counter` (rate)| `smartctl ... PhysicalDriveN` / OpenZFS `/dev/sdN` |
-| macOS     | `disk0`                | none (compile-only)            | `smartctl` via one-shot commands only |
+| macOS     | `disk0`                | `iostat -d -w <n> -c 2` (rate)| `smartctl -s standby,now /dev/<name>` |
 
 Notes:
 
@@ -222,8 +248,12 @@ Notes:
 - On Windows idle detection uses the `PhysicalDisk N` performance counters;
   smartctl needs the corresponding `PhysicalDriveN` or OpenZFS `/dev/sdN` alias
   for the actual spin-down.
-- macOS is a build target only; there is no idle detection, but
-  `sleepnow`/`wakeupnow` work if a device is passed explicitly.
+- macOS uses `iostat -d`; device names are the whole-disk names shown by
+  `diskutil list` (for example `disk2`). `smartctl` needs root privileges on
+  macOS to spin disks down; the smartmontools installer places it in
+  `/usr/local/sbin`, which cs-sleeper locates automatically. On APFS the boot
+  disk is resolved to its physical store (the backing disk of the synthesized
+  container), so the real boot device is never spun down.
 
 ---
 
@@ -243,6 +273,15 @@ Notes:
    are ever managed.
 5. **No forced pool actions by default** — `export-now`/`import-now` only pass
    `-f` to `zpool` when `--force` is given, and refuse while replication runs.
+6. **Never-sleep set** — the OS boot disk, the boot pool's disks, and SLOG/
+   L2ARC/special/dedup flash devices are never spun down, in addition to
+   everything listed in `exclude`.
+7. **Flush before standby** — `sleeppool` runs `zpool sync <pool>` (POSIX
+   `sync` on illumos/Solaris) before spinning disks down, then re-samples disk
+   I/O and skips any disk that became active during the flush. This commits
+   in-flight writes and avoids putting a disk to standby that would wake on the
+   next transaction-group commit. `export-now`/`--export` need no sync: `zpool
+   export` already flushes everything.
 
 Caveat: `smartctl` spin-down on some controllers needs extra `-d` options
 (for example USB or specific HBAs). If `smartctl` fails, the error is logged
@@ -257,11 +296,13 @@ host's native tool.
 - Binary: `.../data/cs_server/tools/cs-sleeper/<os>.<arch>/cs-sleeper[.exe]`.
 - Autostart: the csweb-gui backend starts the daemon from
   `server_boot_tasks.pl` (idempotent via the pid file and the `enabled` flag).
-- Menu: `System > Services > Sleeper` exposes `status`, `sleepnow`,
-  `wakeupnow`, `import-now` and `export-now`.
+- Menu: `System > Services > Sleeper` exposes `status`, `enable`, `disable`,
+  `sleepnow`, `wakeupnow`, `sleeppool`, `wakepool`, `import-now` and
+  `export-now`.
 
 The one-shot commands (`sleepnow`, `wakeupnow`, `import-now`, `export-now`) do
-not need autostart; only `daemon` does.
+not need autostart; only `daemon` does. `enable`/`disable` toggle autostart by
+persisting the `enabled` flag and starting/stopping the daemon.
 
 ---
 

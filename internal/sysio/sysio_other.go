@@ -11,3 +11,6 @@ type otherReader struct{}
 func DevicePath(name string) string { return name }
 
 func (otherReader) Sample(int) ([]Counter, error) { return nil, nil }
+
+// BootDisks returns no devices: boot-disk detection is not supported here.
+func BootDisks() []string { return nil }

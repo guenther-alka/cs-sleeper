@@ -1,14 +1,17 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/guenther-alka/cs-sleeper/internal/sysio"
+	"github.com/guenther-alka/cs-sleeper/internal/zfs"
 )
 
 // setupLogger returns a logger writing to the configured file (or stdout in
@@ -39,18 +42,37 @@ func acquireLock(pidFile string) error {
 	return os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0o644)
 }
 
-// managedDevices returns the normalized list of devices to manage.
+// managedDevices returns the normalized list of devices to manage: the union
+// of the free disks listed in `disks` and the member disks of the configured
+// `pools` (resolved via zpool status), minus `exclude`.
 func managedDevices(cfg *Config) []string {
 	excl := make(map[string]bool, len(cfg.Exclude))
 	for _, e := range cfg.Exclude {
 		excl[sysio.Normalize(e)] = true
 	}
+	// Never sleep the OS boot disk(s) or the disks of the boot pool.
+	for _, d := range sysio.BootDisks() {
+		excl[d] = true
+	}
+	if bp, err := zfs.BootPool(); err == nil && bp != "" {
+		for _, d := range zfs.DisksOfPoolSafe(bp) {
+			excl[d] = true
+		}
+	}
+	seen := make(map[string]bool)
 	var out []string
-	for _, d := range cfg.HD {
-		n := sysio.Normalize(d)
-		if n != "" && !excl[n] {
+	add := func(name string) {
+		n := sysio.Normalize(name)
+		if n != "" && !excl[n] && !seen[n] {
+			seen[n] = true
 			out = append(out, n)
 		}
+	}
+	for _, d := range cfg.Disks {
+		add(d)
+	}
+	for _, d := range zfs.DisksOfPools(cfg.Pools) {
+		add(d)
 	}
 	return out
 }
@@ -81,4 +103,59 @@ func activeSet(prev, cur map[string]sysio.Counter, devices []string) map[string]
 		out[d] = sysio.Active(prev[d], c)
 	}
 	return out
+}
+
+// reverifyIdle re-samples disk I/O after a pool flush and returns the subset of
+// disks that stayed idle. A write that landed in the ZFS RAM write cache during
+// the flush (or right after it) will hit the disks on the next transaction-group
+// commit (~5 s by default), so sampling again avoids spinning down a disk that
+// would wake immediately. Disks that cannot be sampled are kept (fail-open: a
+// broken reader must not block the sleep).
+func reverifyIdle(disks []string, window time.Duration) []string {
+	secs := int(window / time.Second)
+	if secs < 1 {
+		secs = 1
+	}
+	r := sysio.NewReader()
+	prev := sample(r, secs)
+	time.Sleep(window)
+	cur := sample(r, secs)
+	idle := make([]string, 0, len(disks))
+	for _, d := range disks {
+		if sysio.Active(prev[d], cur[d]) || prev[d].Active {
+			continue
+		}
+		idle = append(idle, d)
+	}
+	return idle
+}
+
+// sameStringSet reports whether a and b contain the same set of strings.
+func sameStringSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	m := make(map[string]bool, len(a))
+	for _, s := range a {
+		m[s] = true
+	}
+	for _, s := range b {
+		if !m[s] {
+			return false
+		}
+	}
+	return true
+}
+
+// writeJSONAtomic writes v as indented JSON to path via a temp file + rename.
+func writeJSONAtomic(path string, v any) error {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }

@@ -26,9 +26,9 @@ func (w Window) Active(h int) bool {
 // Config is the parsed cs-sleeper configuration.
 type Config struct {
 	Enabled    bool
-	HD         []string
-	Exclude    []string
-	Pools      []string
+	Disks      []string // free/standalone disks to manage directly
+	Exclude    []string // disks never to touch
+	Pools      []string // pools whose member disks are managed (via zpool status)
 	Activity   []Window
 	Wait       int
 	Interval   int
@@ -37,6 +37,8 @@ type Config struct {
 	Wake       string
 	Parallel   int
 	VerifyIdle int
+	VMMode     string // off | proxmox_suspend | proxmox_shutdown
+	PoolRescan int    // seconds between pool disk re-resolution (daemon)
 	StateDir   string
 	LogFile    string
 	LogLevel   string
@@ -78,6 +80,8 @@ func defaultConfig() *Config {
 		Wake:       "on-access",
 		Parallel:   4,
 		VerifyIdle: 5,
+		VMMode:     "off",
+		PoolRescan: 60,
 		StateDir:   sd,
 		LogFile:    defaultLogFile(),
 		LogLevel:   "info",
@@ -144,12 +148,16 @@ func parseConfig(text string, c *Config) error {
 		switch key {
 		case "enabled":
 			c.Enabled = parseBool(val, c.Enabled)
-		case "hd":
-			c.HD = splitList(val)
+		case "hd", "disks":
+			c.Disks = splitList(val)
 		case "exclude":
 			c.Exclude = splitList(val)
 		case "pools":
 			c.Pools = splitList(val)
+		case "vm-mode":
+			c.VMMode = val
+		case "pool-rescan":
+			c.PoolRescan = parseInt(val, c.PoolRescan)
 		case "activity":
 			ws, err := parseWindows(val)
 			if err != nil {
@@ -190,7 +198,7 @@ func marshalConfig(c *Config) []byte {
 	b.WriteString("# cs-sleeper configuration -- see README.md for the full reference.\n")
 	b.WriteString("# This file was created automatically with defaults.\n")
 	fmt.Fprintf(&b, "enabled      = %s\n", boolStr(c.Enabled))
-	fmt.Fprintf(&b, "hd           = %s\n", strings.Join(c.HD, ","))
+	fmt.Fprintf(&b, "disks        = %s\n", strings.Join(c.Disks, ","))
 	fmt.Fprintf(&b, "exclude      = %s\n", strings.Join(c.Exclude, ","))
 	fmt.Fprintf(&b, "pools        = %s\n", strings.Join(c.Pools, ","))
 	fmt.Fprintf(&b, "activity     = %s\n", windowsStr(c.Activity))
@@ -201,6 +209,8 @@ func marshalConfig(c *Config) []byte {
 	fmt.Fprintf(&b, "wake         = %s\n", c.Wake)
 	fmt.Fprintf(&b, "parallel     = %d\n", c.Parallel)
 	fmt.Fprintf(&b, "verify-idle  = %d\n", c.VerifyIdle)
+	fmt.Fprintf(&b, "vm-mode      = %s\n", c.VMMode)
+	fmt.Fprintf(&b, "pool-rescan  = %d\n", c.PoolRescan)
 	fmt.Fprintf(&b, "state-dir    = %s\n", c.StateDir)
 	fmt.Fprintf(&b, "log-file     = %s\n", c.LogFile)
 	fmt.Fprintf(&b, "log-level    = %s\n", c.LogLevel)
