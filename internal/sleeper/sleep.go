@@ -66,19 +66,23 @@ func smartctlPath() string {
 }
 
 // SleepAll spins a set of devices down, running at most `parallel` smartctl
-// invocations concurrently. It returns one error per failed device.
+// invocations concurrently (0 = unlimited). It returns one error per failed
+// device.
 func SleepAll(devices []string, parallel int) []error {
 	return spinAll(devices, parallel, "standby,now")
 }
 
-// WakeAll spins a set of devices up, at most `parallel` at a time.
+// WakeAll spins a set of devices up, at most `parallel` at a time (0 = unlimited).
 func WakeAll(devices []string, parallel int) []error {
 	return spinAll(devices, parallel, "on")
 }
 
 func spinAll(devices []string, parallel int, sub string) []error {
 	if parallel <= 0 {
-		parallel = 1
+		parallel = len(devices)
+		if parallel < 1 {
+			parallel = 1
+		}
 	}
 	sem := make(chan struct{}, parallel)
 	var (

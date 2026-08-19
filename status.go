@@ -64,9 +64,9 @@ func statusCmd(args []string) {
 	if st != nil {
 		fmt.Printf("daemon: pid=%d updated=%s\n", st.PID, st.Updated.Format("15:04:05"))
 		fmt.Println()
-		fmt.Printf("%-16s %-9s %-12s %s\n", "device", "sleeping", "idle", "last-active")
+		fmt.Printf("%-16s %-9s %-12s %-12s %s\n", "device", "sleeping", "idle", "last-wake", "last-active")
 		for _, d := range st.Disks {
-			fmt.Printf("%-16s %-9v %-12s %s\n", d.Device, d.Sleeping, durStr(d.IdleSeconds), fmtTime(d.LastActive))
+			fmt.Printf("%-16s %-9v %-12s %-12s %s\n", d.Device, d.Sleeping, durStr(d.IdleSeconds), fmtTime(d.LastWake), fmtTime(d.LastActive))
 		}
 	} else {
 		fmt.Println("daemon: not running (no state file found)")

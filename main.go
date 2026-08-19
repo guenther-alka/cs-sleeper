@@ -16,7 +16,7 @@ import (
 
 // version is the release version; set at build time via
 // -ldflags "-X main.version=..." when tagging a release.
-var version = "1.1.0-rc1"
+var version = "1.1.0-rc2"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -56,7 +56,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Println(`cs-sleeper -- spin down idle ZFS pool disks (v1.1.0-rc1)
+	fmt.Println(`cs-sleeper -- spin down idle ZFS pool disks (v1.1.0-rc2)
 
 Usage:
   cs-sleeper daemon [--config PATH] [--foreground] [--once]
@@ -96,8 +96,8 @@ Config:
   interval   = 5          # sampling interval (seconds)
   policy     = standby    # sleep policy (standby)
   standby-min= 10         # drive-internal standby timer set at start (min)
-  wake       = on-access  # on-access | manual
-  parallel   = 4          # max concurrent sleep/wake operations
+  wake       = on-access  # on-access (log wake-ups) | manual
+  parallel   = 4          # max concurrent sleep/wake ops (0 = unlimited)
   verify-idle= 5          # consecutive idle samples before sleeping
   vm-mode    = off        # off | proxmox_suspend | proxmox_shutdown
   pool-rescan= 60         # seconds between pool disk re-resolution

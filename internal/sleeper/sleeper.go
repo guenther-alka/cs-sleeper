@@ -8,6 +8,9 @@ import "time"
 type Options struct {
 	Wait       time.Duration
 	VerifyIdle int
+	// TrackWake records disks that wake on access (previously sleeping and now
+	// showing I/O). Disabled for the `manual` wake policy.
+	TrackWake bool
 	// AllowSleep returns false to block sleeping (e.g. inside activity windows).
 	AllowSleep func(time.Time) bool
 }
@@ -17,6 +20,7 @@ type Disk struct {
 	Device     string
 	Sleeping   bool
 	LastActive time.Time
+	LastWake   time.Time
 	IdleSince  time.Time
 }
 
@@ -47,11 +51,15 @@ func NewEngine(devices []string, opt Options) *Engine {
 }
 
 // Update feeds one sample (set of devices that showed I/O) and returns the
-// devices that should now be put to sleep.
-func (e *Engine) Update(active map[string]bool, now time.Time) []string {
-	var sleep []string
+// devices that should now be put to sleep, plus — when TrackWake is enabled —
+// the devices that woke on access (previously sleeping, now active).
+func (e *Engine) Update(active map[string]bool, now time.Time) (sleep []string, woke []string) {
 	for name, d := range e.disks {
 		if active[name] {
+			if e.opt.TrackWake && d.Sleeping {
+				woke = append(woke, name)
+				d.LastWake = now
+			}
 			d.LastActive = now
 			d.IdleSince = time.Time{}
 			d.verify = e.opt.VerifyIdle
@@ -74,7 +82,7 @@ func (e *Engine) Update(active map[string]bool, now time.Time) []string {
 			}
 		}
 	}
-	return sleep
+	return sleep, woke
 }
 
 // Snapshot returns a copy of the current per-disk state.
@@ -85,6 +93,7 @@ func (e *Engine) Snapshot() []Disk {
 			Device:     name,
 			Sleeping:   d.Sleeping,
 			LastActive: d.LastActive,
+			LastWake:   d.LastWake,
 			IdleSince:  d.IdleSince,
 		})
 	}

@@ -3,6 +3,13 @@
 All notable changes to cs-sleeper are documented here. Versions follow
 `v<major>.<minor>.<patch>`; see the git tags for the full history.
 
+## v1.1.0-rc2 (2026-08-19) — Release Candidate
+
+- `wake = on-access` now logs/tracks disks that wake on access (shown as
+  `last-wake` in `status`); `manual` disables the tracking.
+- `parallel = 0` now means unlimited concurrent sleep/wake operations (was:
+  silently forced to sequential).
+
 ## v1.1.0-rc1 (2026-08-19) — Release Candidate
 
 - Pool-level sleep/wake: new `sleeppool`/`wakepool` commands (standby, or

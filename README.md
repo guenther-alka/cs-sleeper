@@ -13,7 +13,7 @@ disk down/up and to export/import a whole pool.
 run on ZFS hosts: Linux, illumos, Solaris, FreeBSD and macOS (plus Windows as a
 smartctl-only target).
 
-> **Status:** `v1.1.0-rc1` is a **release candidate** (pre-release). Prebuilt
+> **Status:** `v1.1.0-rc2` is a **release candidate** (pre-release). Prebuilt
 > binaries are available on the
 > [GitHub Releases](https://github.com/guenther-alka/cs-sleeper/releases) page.
 
@@ -159,8 +159,8 @@ ignored. Boolean values accept `yes/no`, `true/false`, `on/off`, `1/0`.
 | `interval`   | `5`                     | Sampling interval in seconds.                                            |
 | `policy`     | `standby`               | Sleep policy. Only `standby` (smartctl spin-down) is implemented.         |
 | `standby-min`| `10`                    | Drive-internal standby timer (minutes) set at daemon start as fallback.  |
-| `wake`       | `on-access`             | `on-access` (track wake-ups) or `manual` (use `wakeupnow`).              |
-| `parallel`   | `4`                     | Max concurrent sleep/wake operations.                                    |
+| `wake`       | `on-access`             | `on-access` logs disks that wake on access (shown as `last-wake` in `status`); `manual` disables tracking (wake via `wakeupnow`/`wakepool`). |
+| `parallel`   | `4`                     | Max concurrent sleep/wake operations; `0` = unlimited.                   |
 | `verify-idle`| `5`                     | Consecutive idle samples required (after `wait`) before sleeping.        |
 | `vm-mode`    | `off`                   | `off` \| `proxmox_suspend` \| `proxmox_shutdown` (VM handling on sleep).  |
 | `pool-rescan`| `60`                    | Seconds between pool disk re-resolution in the daemon.                    |
@@ -282,6 +282,11 @@ Notes:
    in-flight writes and avoids putting a disk to standby that would wake on the
    next transaction-group commit. `export-now`/`--export` need no sync: `zpool
    export` already flushes everything.
+   The daemon's continuous per-disk sleep path needs no explicit flush: a disk
+   is only slept after `wait` plus `verify-idle` consecutive idle samples —
+   minutes of inactivity, far longer than the ~5 s transaction-group commit —
+   so any buffered write would already have hit the disk and reset the idle
+   timer.
 
 Caveat: `smartctl` spin-down on some controllers needs extra `-d` options
 (for example USB or specific HBAs). If `smartctl` fails, the error is logged

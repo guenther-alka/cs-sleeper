@@ -16,6 +16,7 @@ type diskState struct {
 	Device      string    `json:"device"`
 	Sleeping    bool      `json:"sleeping"`
 	LastActive  time.Time `json:"last_active"`
+	LastWake    time.Time `json:"last_wake,omitempty"`
 	IdleSeconds int       `json:"idle_seconds"`
 }
 
@@ -40,6 +41,7 @@ func writeState(cfg *Config, engine *sleeper.Engine, now time.Time, rep replchec
 			Device:      d.Device,
 			Sleeping:    d.Sleeping,
 			LastActive:  d.LastActive,
+			LastWake:    d.LastWake,
 			IdleSeconds: idle,
 		})
 	}

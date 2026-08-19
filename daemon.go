@@ -67,6 +67,7 @@ func daemonCmd(args []string) {
 	opt := sleeper.Options{
 		Wait:       time.Duration(cfg.Wait) * time.Second,
 		VerifyIdle: cfg.VerifyIdle,
+		TrackWake:  cfg.Wake == "on-access",
 		AllowSleep: func(t time.Time) bool { return !cfg.InWindow(t.Hour()) },
 	}
 	engine := sleeper.NewEngine(devices, opt)
@@ -101,7 +102,11 @@ func daemonCmd(args []string) {
 
 		rep := replcheck.Check()
 
-		for _, d := range engine.Update(activeSet(prev, cur, devices), now) {
+		sleepNow, woke := engine.Update(activeSet(prev, cur, devices), now)
+		for _, d := range woke {
+			logger.Printf("wake %s on access", d)
+		}
+		for _, d := range sleepNow {
 			if rep.Active {
 				logger.Printf("refusing to sleep %s: zfs send/receive in flight", d)
 				continue
