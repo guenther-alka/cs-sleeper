@@ -13,7 +13,7 @@ disk down/up and to export/import a whole pool.
 run on ZFS hosts: Linux, illumos, Solaris, FreeBSD and macOS (plus Windows as a
 smartctl-only target).
 
-> **Status:** `v1.1.0-rc4` is a **release candidate** (pre-release). Prebuilt
+> **Status:** `v1.1.0-rc9` is a **release candidate** (pre-release). Prebuilt
 > binaries are available on the
 > [GitHub Releases](https://github.com/guenther-alka/cs-sleeper/releases) page.
 

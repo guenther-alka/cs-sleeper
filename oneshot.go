@@ -131,9 +131,20 @@ func sleepPoolCmd(args []string) {
 		return
 	}
 
-	logger := log.New(os.Stderr, "", log.LstdFlags)
+	// FOUND LIVE cs_26.08.20 (Gea report: "bei Pool Sleep per Menü kommt nur
+	// reload"): this logger used to write to os.Stderr, so csweb-gui's
+	// remote exec of this one-shot command -- which reads the process's
+	// stdout -- never saw the per-disk detail lines (e.g. "sleeppool
+	// daten1: c6t...: exit status 1"), only the unconditional final
+	// "sleeppool daten1: ok" below. Combined with execSleepPool previously
+	// never returning an error for partial disk failures, the GUI's own
+	// failure-detection regex (_sleeper_show_result_or_reload) had nothing
+	// to match and silently reloaded. Logging to stdout instead -- same
+	// stream status/enable/disable already use successfully -- means the
+	// detail lines and the now-possible non-zero exit both reach the GUI.
+	logger := log.New(os.Stdout, "", log.LstdFlags)
 	if err := execSleepPool(cfg, *pool, *export, *includeVM, *force, logger); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
+		fmt.Println("error:", err)
 		os.Exit(1)
 	}
 	fmt.Printf("sleeppool %s: ok\n", *pool)
@@ -173,9 +184,10 @@ func wakePoolCmd(args []string) {
 		return
 	}
 
-	logger := log.New(os.Stderr, "", log.LstdFlags)
+	// Same stdout fix as sleepPoolCmd above -- see that comment.
+	logger := log.New(os.Stdout, "", log.LstdFlags)
 	if err := execWakePool(cfg, *pool, *includeVM, *force, logger); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
+		fmt.Println("error:", err)
 		os.Exit(1)
 	}
 	fmt.Printf("wakepool %s: ok\n", *pool)

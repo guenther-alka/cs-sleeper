@@ -3,6 +3,36 @@
 All notable changes to cs-sleeper are documented here. Versions follow
 `v<major>.<minor>.<patch>`; see the git tags for the full history.
 
+## v1.1.0-rc9 (2026-08-20) — Release Candidate
+
+Bug fixes (live-caught via Gea's csweb-gui sleep test on member .203, pool
+`daten1`):
+
+- **illumos/Solaris: smartctl "Unable to detect device type" on every
+  managed disk.** `sysio.Normalize()` lower-cases every device name for
+  cross-platform comparison, but illumos' `/dev/rdsk/` symlinks embed the
+  disk's WWN in mixed/upper-case hex (e.g. `c6t5000CCA0BBE3CE1Cd0`) --
+  building the smartctl path directly from the lower-cased name
+  (`c6t5000cca0bbe3ce1cd0`) produced a filename that doesn't exist on
+  illumos' case-sensitive `/dev` tree, so `sleepnow`/`sleeppool`/the daemon
+  loop could never actually put a disk to standby, only report a confusing
+  smartctl autodetect failure. Confirmed live: `iostat -xn` itself already
+  reports the correct upper-case name, so `Normalize()`'s lower-casing was
+  the only source of the mismatch. Fix: `DevicePath()` (illumos/Solaris
+  only) now resolves the real on-disk casing via a case-insensitive scan of
+  `/dev/rdsk` before building the smartctl path; `Normalize()` itself is
+  unchanged (still the right comparison key for exclude-lists/maps
+  elsewhere).
+- **`sleeppool`/`wakepool` reported "ok" (exit 0) even when individual
+  disks failed to sleep/wake.** `execSleepPool`/`execWakePool` logged each
+  disk's smartctl failure but always returned `nil`, so a partially-failed
+  pool action looked like unqualified success to every caller. Both now
+  return an aggregate error when any disk failed. Also moved the one-shot
+  `sleeppool`/`wakepool` CLI commands' detail logger from stderr to stdout
+  (matching `status`/`enable`/`disable`), so csweb-gui's Sleeper menu
+  reliably sees the per-disk failure text instead of just the final summary
+  line.
+
 ## v1.1.0-rc7 (2026-08-20) — Release Candidate
 
 New feature (config-only, backward compatible):

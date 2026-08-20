@@ -5,6 +5,7 @@ package sysio
 import (
 	"bufio"
 	"context"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -29,11 +30,49 @@ func NewReader() Reader { return solarisReader{} }
 type solarisReader struct{}
 
 // DevicePath returns the raw disk path for a logical name (c2t1d0).
+//
+// FOUND LIVE cs_26.08.20 (Gea report: smartctl "Unable to detect device
+// type" on member .203, disk daten1/c6t5000cca0bbe3ce1cd0): illumos'
+// /dev/rdsk/ symlinks embed the disk's WWN in mixed/upper-case hex (e.g.
+// c6t5000CCA0BBE3CE1Cd0), but every managed-disk name flowing through this
+// package has already gone through sysio.Normalize(), which lower-cases it
+// for cross-platform comparison. Building the path directly from that
+// lower-cased name produces a filename that doesn't exist on illumos'
+// case-sensitive /dev tree, so smartctl can't even open the device --
+// confirmed live: /dev/rdsk/c6t5000cca0bbe3ce1cd0s2 fails to open ("Unable
+// to detect device type"), while the real /dev/rdsk/c6t5000CCA0BBE3CE1Cd0s2
+// works (smartctl -a succeeds, smartctl -s standby,now succeeds). Also
+// confirmed `iostat -xn` itself reports the correct upper-case name --
+// Normalize() is what introduces the mismatch, not the kstat/iostat source.
+// resolveDeviceCase looks up the actual on-disk entry via a case-insensitive
+// scan of /dev/rdsk so the smartctl invocation always uses the real casing;
+// Normalize() itself is left untouched since its lower-cased form is still
+// the right comparison key for exclude-lists/maps elsewhere in this project.
 func DevicePath(name string) string {
 	if strings.HasPrefix(name, "/dev/rdsk/") || strings.HasPrefix(name, "/dev/dsk/") {
 		return name
 	}
+	if real := resolveDeviceCase(name); real != "" {
+		name = real
+	}
 	return "/dev/rdsk/" + name + "s2"
+}
+
+// resolveDeviceCase returns the actual-case /dev/rdsk entry name (without
+// the s2 suffix) matching name case-insensitively, or "" if /dev/rdsk can't
+// be read or no entry matches (caller falls back to the given name as-is).
+func resolveDeviceCase(name string) string {
+	entries, err := os.ReadDir("/dev/rdsk")
+	if err != nil {
+		return ""
+	}
+	want := strings.ToLower(name) + "s2"
+	for _, e := range entries {
+		if strings.ToLower(e.Name()) == want {
+			return strings.TrimSuffix(e.Name(), "s2")
+		}
+	}
+	return ""
 }
 
 // Sample runs `iostat -xn <n> 2` and reports the second (interval-rate)

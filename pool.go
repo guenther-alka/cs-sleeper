@@ -68,10 +68,23 @@ func execSleepPool(cfg *Config, pool string, export, includeVM, force bool, logg
 			logger.Printf("sleeppool %s: re-verify: %d disk(s) active, skipped", pool, skipped)
 		}
 	}
-	for _, e := range sleeper.SleepAll(toSleep, cfg.Parallel) {
+	sleepErrs := sleeper.SleepAll(toSleep, cfg.Parallel)
+	for _, e := range sleepErrs {
 		logger.Printf("sleeppool %s: %v", pool, e)
 	}
-	logger.Printf("sleeppool %s: %d disk(s) to standby", pool, len(toSleep))
+	logger.Printf("sleeppool %s: %d disk(s) to standby", pool, len(toSleep)-len(sleepErrs))
+	// FOUND LIVE cs_26.08.20 (Gea report: "bei Pool Sleep per Menü kommt nur
+	// reload" -- csweb-gui's failure detection never triggered even though a
+	// disk's smartctl call had actually failed): this used to always return
+	// nil here, so a partially-failed sleeppool (one or more disks refused
+	// standby) still looked like unqualified success to every caller --
+	// exit code 0 on the CLI, and no error text for oneshot.go's one-shot
+	// commands to print/exit non-zero on. Propagate a real error when any
+	// disk failed so sleepPoolCmd (oneshot.go) surfaces it instead of
+	// silently reporting "ok".
+	if len(sleepErrs) > 0 {
+		return fmt.Errorf("%d of %d disk(s) failed to sleep", len(sleepErrs), len(toSleep))
+	}
 	return nil
 }
 
@@ -121,8 +134,10 @@ func execWakePool(cfg *Config, pool string, includeVM, force bool, logger *log.L
 		}
 		logger.Printf("wakepool %s: imported", pool)
 	}
+	var wakeErrs []error
 	if disks, err := zfs.DisksOfPool(pool); err == nil {
-		for _, e := range sleeper.WakeAll(disks, cfg.Parallel) {
+		wakeErrs = sleeper.WakeAll(disks, cfg.Parallel)
+		for _, e := range wakeErrs {
 			logger.Printf("wakepool %s: %v", pool, e)
 		}
 	} else {
@@ -134,6 +149,11 @@ func execWakePool(cfg *Config, pool string, includeVM, force bool, logger *log.L
 		}
 	}
 	logger.Printf("wakepool %s: done", pool)
+	// Same fix as execSleepPool above: don't silently report success when a
+	// disk actually failed to wake.
+	if len(wakeErrs) > 0 {
+		return fmt.Errorf("%d disk(s) failed to wake", len(wakeErrs))
+	}
 	return nil
 }
 
