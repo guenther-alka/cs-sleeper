@@ -16,7 +16,7 @@ import (
 
 // version is the release version; set at build time via
 // -ldflags "-X main.version=..." when tagging a release.
-var version = "1.1.0-rc5"
+var version = "1.1.0-rc6"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -56,7 +56,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Println(`cs-sleeper -- spin down idle ZFS pool disks (v1.1.0-rc5)
+	fmt.Println(`cs-sleeper -- spin down idle ZFS pool disks (v1.1.0-rc6)
 
 Usage:
   cs-sleeper daemon [--config PATH] [--foreground] [--once]
@@ -105,6 +105,10 @@ Config:
   log-file   = /var/log/cs-sleeper.log
   log-level  = info       # debug | info | warn | error
   pid-file   = /var/run/cs-sleeper/cs-sleeper.pid
+  export-pools     =                     # pools on a forced export/import schedule
+  export-timetable = 07:00-19:00         # HH:MM-HH:MM,...; outside = exported, inside = imported
+  pool-window      = tank:06:00-22:00    # pool:HH:MM-HH:MM,...;pool2:...  per-pool allow-sleep window,
+                                          # replaces activity for that pool's disks only
 
 Never slept: the OS boot disk, SLOG/L2ARC/special/dedup flash disks, and
 everything listed in exclude.

@@ -119,6 +119,21 @@ func managedDevices(cfg *Config) []string {
 	return out
 }
 
+// devicePoolMap returns each managed disk's owning pool name (normalized
+// disk -> pool name), used to resolve PoolWindow overrides. Free disks
+// (cfg.Disks, not part of any named pool) are simply absent from the map --
+// callers fall back to the global Activity window for those, same as
+// before PoolWindow existed.
+func devicePoolMap(cfg *Config) map[string]string {
+	m := map[string]string{}
+	for _, pool := range cfg.Pools {
+		for _, d := range zfs.DisksOfPoolSafe(pool) {
+			m[sysio.Normalize(d)] = pool
+		}
+	}
+	return m
+}
+
 // sample reads one sample and returns counters keyed by normalized device name.
 func sample(r sysio.Reader, window int) map[string]sysio.Counter {
 	out := map[string]sysio.Counter{}

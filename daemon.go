@@ -64,11 +64,20 @@ func daemonCmd(args []string) {
 		}
 	}
 
+	devicePool := devicePoolMap(cfg)
 	opt := sleeper.Options{
 		Wait:       time.Duration(cfg.Wait) * time.Second,
 		VerifyIdle: cfg.VerifyIdle,
 		TrackWake:  cfg.Wake == "on-access",
-		AllowSleep: func(t time.Time) bool { return !cfg.InWindow(t.Hour()) },
+		// A disk whose pool has its own PoolWindow uses that instead of
+		// the global Activity window; everything else (free disks, or a
+		// pool with no override) keeps the original global-only behavior.
+		AllowSleep: func(d string, t time.Time) bool {
+			if ws, ok := cfg.PoolWindow[devicePool[d]]; ok && devicePool[d] != "" {
+				return !inAnyMinWindow(ws, minOfDay(t))
+			}
+			return !cfg.InWindow(t.Hour())
+		},
 	}
 	engine := sleeper.NewEngine(devices, opt)
 
@@ -89,15 +98,21 @@ func daemonCmd(args []string) {
 		cur := sample(reader, cfg.Interval)
 		now := time.Now()
 
-		// Periodically re-resolve pool disks to pick up replacements.
+		// Periodically re-resolve pool disks to pick up replacements, and
+		// run the export-pools schedule check -- both are pool-membership
+		// operations that only need minute-level responsiveness (window
+		// boundaries are HH:MM), so they share this slower tick rather
+		// than running on every `interval` sample.
 		if now.Sub(lastRescan) >= rescan {
 			lastRescan = now
 			if nd := managedDevices(cfg); !sameStringSet(nd, devices) {
 				logger.Printf("device set changed: %s -> %s", strings.Join(devices, ","), strings.Join(nd, ","))
 				devices = nd
+				devicePool = devicePoolMap(cfg)
 				engine = sleeper.NewEngine(devices, opt)
 				prev = sample(reader, cfg.Interval)
 			}
+			handleExportSchedule(cfg, now, logger)
 		}
 
 		rep := replcheck.Check()

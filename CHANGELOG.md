@@ -3,6 +3,63 @@
 All notable changes to cs-sleeper are documented here. Versions follow
 `v<major>.<minor>.<patch>`; see the git tags for the full history.
 
+## v1.1.0-rc6 (2026-08-20) — Release Candidate
+
+New feature (config-only, backward compatible -- existing configs behave
+identically since the new fields default empty/inert):
+
+- **Per-pool allow-sleep window (`pool-window`).** Previously the single
+  global `activity` window applied uniformly to every managed disk. A pool
+  can now get its own allow-sleep window via `pool-window =
+  pool:HH:MM-HH:MM,...;pool2:HH:MM-HH:MM`, which *replaces* (does not add to)
+  `activity` for that pool's member disks only; a pool with no entry, and any
+  free/standalone disk listed under `disks` (which has no owning pool),
+  keeps using the original global `activity` window unchanged. Internally,
+  `sleeper.Options.AllowSleep` changed signature from `func(time.Time) bool`
+  to `func(device string, t time.Time) bool` so the idle-detection engine can
+  look up the right window per disk; the new `devicePoolMap()` helper
+  resolves each managed disk to its owning pool (rebuilt on every
+  `pool-rescan` tick alongside the existing device-list rescan).
+- **Forced export/import schedule for backup pools (`export-pools` +
+  `export-timetable`).** A shared HH:MM timetable (`export-timetable =
+  07:00-19:00,...`) applied to every pool listed in `export-pools`: outside
+  every window the pool is force-exported (equivalent to `sleeppool
+  --export`), inside a window it is imported and woken (equivalent to
+  `wakepool`) -- independent of and in addition to ordinary idle-based
+  sleep. Both fields must be non-empty for the feature to do anything for a
+  given pool (a pool listed with no timetable is inert, not "always
+  exported" -- deliberately avoiding a permanently-exported foot-gun from a
+  half-finished config). The new `handleExportSchedule()` only acts on
+  *state transitions* (compares the schedule's desired state against
+  `zfs.IsImported(pool)`), so it is safe to call on every `pool-rescan` tick
+  (default 60s -- window boundaries only need minute-level responsiveness,
+  not the faster `interval` tick). Every action goes through the existing
+  `execSleepPool`/`execWakePool` functions unchanged, so it automatically
+  gets the exact same guards as a manual `sleeppool`/`wakepool` call: the
+  replication-in-flight check (including the new rc5 Windows guard), the
+  boot-pool refusal, the never-sleep exclude set, and VM pause/resume (`+vm`
+  applied automatically whenever `vm-mode != off`, matching manual pool
+  actions -- no separate flag). `force` is always `false` for scheduled
+  actions, same as a manual call without `--force`.
+- **New `MinWindow` type** (minute-of-day, 0-1439, HH:MM granularity, same
+  midnight-crossing convention as the existing hour-granularity `Window`)
+  backs both new fields, since hour granularity was too coarse for a forced
+  export schedule. New config-level validation (`validateConfig`, run after
+  every parse regardless of which frontend wrote the file, not only
+  csweb-gui's own Settings form): overlapping windows within one list are
+  rejected (midnight-crossing windows are split into their two segments
+  before the pairwise check), and any pool referenced by `export-pools` or
+  `pool-window` that is not also listed in `pools` is rejected.
+- Config key syntax: `export-pools = pool1,pool2`; `export-timetable =
+  HH:MM-HH:MM,HH:MM-HH:MM`; `pool-window =
+  poolA:HH:MM-HH:MM,HH:MM-HH:MM;poolB:HH:MM-HH:MM` (`;` separates per-pool
+  entries, `:` separates the pool name from its window list, `,` separates
+  multiple windows within one list -- consistent with the existing
+  comma-list convention used elsewhere in the config).
+- New `config_test.go` covers `MinWindow.Active` (including midnight
+  crossing), HH:MM and pool-window parsing/formatting round-trips, the two
+  new validation rules, and end-to-end `parseConfig` of the three new keys.
+
 ## v1.1.0-rc5 (2026-08-20) — Release Candidate
 
 Real behavior change (Windows only):

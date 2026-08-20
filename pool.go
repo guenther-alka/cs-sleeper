@@ -75,6 +75,42 @@ func execSleepPool(cfg *Config, pool string, export, includeVM, force bool, logg
 	return nil
 }
 
+// handleExportSchedule checks every pool in cfg.ExportPools against
+// cfg.ExportTimetable and forces it to the state (exported vs. imported)
+// its schedule currently calls for, acting only on state transitions --
+// so this is safe to call repeatedly (e.g. once per pool-rescan tick).
+// Both ExportPools and ExportTimetable must be non-empty for this to do
+// anything (see the ExportPools doc comment in config.go for why). Every
+// action goes through execSleepPool/execWakePool, so it gets the exact
+// same guards (replication check, boot-pool/never-sleep protection, VM
+// handling) as the equivalent manual sleeppool/wakepool action.
+func handleExportSchedule(cfg *Config, now time.Time, logger *log.Logger) {
+	if len(cfg.ExportPools) == 0 || len(cfg.ExportTimetable) == 0 {
+		return
+	}
+	inWindow := inAnyMinWindow(cfg.ExportTimetable, minOfDay(now))
+	includeVM := cfg.VMMode != "off"
+	for _, pool := range cfg.ExportPools {
+		imported, err := zfs.IsImported(pool)
+		if err != nil {
+			logger.Printf("export-schedule %s: cannot check import state: %v", pool, err)
+			continue
+		}
+		switch {
+		case inWindow && !imported:
+			logger.Printf("export-schedule %s: entering window, waking", pool)
+			if err := execWakePool(cfg, pool, includeVM, false, logger); err != nil {
+				logger.Printf("export-schedule %s: wake failed: %v", pool, err)
+			}
+		case !inWindow && imported:
+			logger.Printf("export-schedule %s: outside window, sleeping/exporting", pool)
+			if err := execSleepPool(cfg, pool, true, includeVM, false, logger); err != nil {
+				logger.Printf("export-schedule %s: export failed: %v", pool, err)
+			}
+		}
+	}
+}
+
 // execWakePool wakes a pool: imports it if necessary, spins its disks up and
 // optionally resumes/starts VMs that were paused by a previous sleeppool.
 func execWakePool(cfg *Config, pool string, includeVM, force bool, logger *log.Logger) error {

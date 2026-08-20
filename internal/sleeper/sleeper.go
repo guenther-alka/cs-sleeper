@@ -11,8 +11,9 @@ type Options struct {
 	// TrackWake records disks that wake on access (previously sleeping and now
 	// showing I/O). Disabled for the `manual` wake policy.
 	TrackWake bool
-	// AllowSleep returns false to block sleeping (e.g. inside activity windows).
-	AllowSleep func(time.Time) bool
+	// AllowSleep returns false to block sleeping device at time t (e.g.
+	// inside an activity window -- global, or a per-pool override).
+	AllowSleep func(device string, t time.Time) bool
 }
 
 // Disk is a snapshot of one managed disk's state.
@@ -69,7 +70,7 @@ func (e *Engine) Update(active map[string]bool, now time.Time) (sleep []string, 
 		if d.IdleSince.IsZero() {
 			d.IdleSince = now
 		}
-		if !e.opt.AllowSleep(now) {
+		if !e.opt.AllowSleep(name, now) {
 			continue
 		}
 		if now.Sub(d.IdleSince) >= e.opt.Wait {
