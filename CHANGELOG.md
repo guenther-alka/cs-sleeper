@@ -3,6 +3,34 @@
 All notable changes to cs-sleeper are documented here. Versions follow
 `v<major>.<minor>.<patch>`; see the git tags for the full history.
 
+## v1.1.0-rc4 (2026-08-20) — Release Candidate
+
+Documentation/consistency fixes found while auditing the README against the
+actual Go source -- no daemon/CLI behavior changes:
+
+- **Version bump:** `main.go`'s hardcoded fallback `version` and `--help`
+  banner text bumped from `1.1.0-rc3` to `1.1.0-rc4` (release binaries
+  always get the correct string via the release workflow's `-ldflags -X
+  main.version=...`; this keeps a plain local `go build .` honest too).
+- **README corrected to match the actual config/CLI behavior:**
+  - `disks` documented as the canonical config key (matches what
+    `marshalConfig` actually writes and what `main.go`'s own usage text
+    uses); `hd` is still accepted when reading a config file (legacy
+    alias in `parseConfig`), now documented as such instead of as the
+    primary name. Clarified that `disks` lists free/standalone disks
+    managed *in addition to* disks resolved from `pools`.
+  - `state-dir`/`log-file`/`pid-file` defaults documented as
+    OS-conditional: Unix-like platforms default to `/var/run/cs-sleeper`
+    and `/var/log/cs-sleeper.log`; Windows (no `/var/run`) falls back to
+    `%TEMP%\cs-sleeper` and `%TEMP%\cs-sleeper\cs-sleeper.log`
+    (`defaultStateDir`/`defaultLogFile` in `config.go`). The README
+    previously stated the Unix-only defaults unconditionally.
+  - Added a napp-it/csweb-gui integration note describing the
+    active/backup pool categorization UI (a csweb-gui-side
+    `_cfg/cs-sleeper.pooltype` file, never read by cs-sleeper itself) and
+    that csweb-gui overrides `state-dir`/`log-file`/`pid-file` to its own
+    `tmp/` folder rather than relying on the built-in defaults above.
+
 ## v1.1.0-rc3 (2026-08-19) — Release Candidate
 
 Security/robustness follow-up to the rc2 review, implementing all five

@@ -13,7 +13,7 @@ disk down/up and to export/import a whole pool.
 run on ZFS hosts: Linux, illumos, Solaris, FreeBSD and macOS (plus Windows as a
 smartctl-only target).
 
-> **Status:** `v1.1.0-rc3` is a **release candidate** (pre-release). Prebuilt
+> **Status:** `v1.1.0-rc4` is a **release candidate** (pre-release). Prebuilt
 > binaries are available on the
 > [GitHub Releases](https://github.com/guenther-alka/cs-sleeper/releases) page.
 
@@ -58,8 +58,9 @@ As a belt-and-suspenders fallback the daemon also sets the drive-internal
 standby timer (`smartctl -s standby,<standby-min>`) at startup, so disks still
 spin down on their own even if the daemon is stopped.
 
-`cs-sleeper` only manages the disks you list in `hd`. It never touches disks in
-`exclude`, system disks, or disks that are not listed.
+`cs-sleeper` only manages the disks you list in `disks` (plus any resolved
+from `pools`). It never touches disks in `exclude`, system disks, or disks
+that are not listed.
 
 ---
 
@@ -122,7 +123,7 @@ cs-sleeper status
 
 # 2. Edit the config and list the disks to manage.
 vi /opt/csweb-gui/_cfg/cs-sleeper
-#   hd = sda,ada0,c2t1d0      (device names, see Platform matrix)
+#   disks = sda,ada0,c2t1d0   (device names, see Platform matrix)
 
 # 3. Run once in the foreground to verify detection.
 cs-sleeper daemon --foreground --once
@@ -157,7 +158,7 @@ ignored. Boolean values accept `yes/no`, `true/false`, `on/off`, `1/0`.
 | Key          | Default                 | Meaning                                                                 |
 |--------------|-------------------------|-------------------------------------------------------------------------|
 | `enabled`    | `yes`                   | Whether the daemon runs at all. `no` makes `daemon` exit immediately.   |
-| `hd`         | *(empty)*               | Comma-separated disks to manage (device names, see Platform matrix).     |
+| `disks`      | *(empty)*               | Comma-separated free/standalone disks to manage directly (device names, see Platform matrix), **in addition** to any disks resolved from `pools`. `hd` is still accepted as a legacy alias when reading the file, but `disks` is what cs-sleeper itself writes. |
 | `exclude`    | *(empty)*               | Comma-separated disks to never touch.                                    |
 | `pools`      | *(empty)*               | Pools whose member disks are managed (via `zpool status`).                |
 | `activity`   | *(empty)*               | Comma-separated hour ranges `H-H` (0-23, may cross midnight). Sleep is   |
@@ -171,16 +172,22 @@ ignored. Boolean values accept `yes/no`, `true/false`, `on/off`, `1/0`.
 | `verify-idle`| `5`                     | Consecutive idle samples required (after `wait`) before sleeping.        |
 | `vm-mode`    | `off`                   | `off` \| `proxmox_suspend` \| `proxmox_shutdown` (VM handling on sleep).  |
 | `pool-rescan`| `60`                    | Seconds between pool disk re-resolution in the daemon.                    |
-| `state-dir`  | `/var/run/cs-sleeper`   | Directory for the pid file and `state.json`.                             |
-| `log-file`   | `/var/log/cs-sleeper.log` | Daemon log file.                                                       |
+| `state-dir`  | `/var/run/cs-sleeper` (Unix-like); `%TEMP%\cs-sleeper` on Windows | Directory for the pid file and `state.json`. OS-conditional default -- Windows has no `/var/run`, so it falls back to the process temp dir. |
+| `log-file`   | `/var/log/cs-sleeper.log` (Unix-like); `%TEMP%\cs-sleeper\cs-sleeper.log` on Windows | Daemon log file. Same Windows fallback as `state-dir`. |
 | `log-level`  | `info`                  | `debug` / `info` / `warn` / `error`.                                     |
-| `pid-file`   | `/var/run/cs-sleeper/cs-sleeper.pid` | Pid file (prevents duplicate daemons).                       |
+| `pid-file`   | `<state-dir>/cs-sleeper.pid` | Pid file (prevents duplicate daemons); always derived from `state-dir`, so it follows the same OS-conditional default. |
+
+Note: the napp-it/csweb-gui backend overrides `state-dir`, `log-file` and
+`pid-file` in the config it writes, pointing them at
+`.../csweb-gui/tmp/cs-sleeper/...` on every platform instead of relying on
+these built-in defaults -- see
+[napp-it / csweb-gui integration](#napp-it--csweb-gui-integration).
 
 Example:
 
 ```
 enabled    = yes
-hd         = sda,sdb,ada0,ada1
+disks      = sda,sdb,ada0,ada1
 exclude    =
 pools      = tank,backup
 activity   = 12-14,18-6
@@ -276,8 +283,8 @@ Notes:
    from transient activity.
 3. **Activity windows** — sleep is refused inside the configured `activity`
    windows, so maintenance/replication slots are always respected.
-4. **Explicit allow-list** — only disks listed in `hd` (and not in `exclude`)
-   are ever managed.
+4. **Explicit allow-list** — only disks listed in `disks`/`pools` (and not in
+   `exclude`) are ever managed.
 5. **No forced pool actions by default** — `export-now`/`import-now` only pass
    `-f` to `zpool` when `--force` is given, and refuse while replication runs.
 6. **Never-sleep set** — the OS boot disk, the boot pool's disks, and SLOG/
@@ -316,13 +323,21 @@ host's native tool.
 
 ## napp-it / csweb-gui integration
 
-- Config: `/opt/csweb-gui/_cfg/cs-sleeper` (created on first use).
+- Config: `/opt/csweb-gui/_cfg/cs-sleeper` (created on first use). The
+  csweb-gui Settings form writes `state-dir`, `log-file` and `pid-file` under
+  `.../csweb-gui/tmp/cs-sleeper/...` rather than leaving cs-sleeper's own
+  `/var/run`, `/var/log` or Windows `%TEMP%` defaults in place.
 - Binary: `.../data/cs_server/tools/cs-sleeper/<os>.<arch>/cs-sleeper[.exe]`.
 - Autostart: the csweb-gui backend starts the daemon from
   `server_boot_tasks.pl` (idempotent via the pid file and the `enabled` flag).
 - Menu: `System > Services > Sleeper` exposes `status`, `enable`, `disable`,
   `sleepnow`, `wakeupnow`, `sleeppool`, `wakepool`, `import-now` and
-  `export-now`.
+  `export-now`. `pools` is presented there as two categorized fields --
+  "active pools" and "backup pools" -- purely as a UI aid (stored in a
+  separate `_cfg/cs-sleeper.pooltype` side file, never read by cs-sleeper
+  itself); every pool still supports the full sleep/wake/export/import action
+  set regardless of category, and the `activity` window remains one global
+  schedule applied to all managed disks, not per pool/category.
 
 The one-shot commands (`sleepnow`, `wakeupnow`, `import-now`, `export-now`) do
 not need autostart; only `daemon` does. `enable`/`disable` toggle autostart by
