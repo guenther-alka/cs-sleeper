@@ -3,6 +3,35 @@
 All notable changes to cs-sleeper are documented here. Versions follow
 `v<major>.<minor>.<patch>`; see the git tags for the full history.
 
+## v1.1.0-rc5 (2026-08-20) — Release Candidate
+
+Real behavior change (Windows only):
+
+- **Windows replication guard implemented.** `internal/replcheck` previously
+  always reported "no replication running" on Windows, on the assumption
+  that OpenZFS on Windows is a storage target only and never runs `zfs
+  send`/`receive` locally. That assumption doesn't hold for napp-it CS's own
+  replication feature, which can run `zfs send`/`receive` directly on a
+  Windows member -- so the replication gate (`sleepnow`, `sleeppool`
+  including `--export`, `export-now`, and the daemon's idle loop all refuse
+  to act while it reports active) provided **no protection at all** on
+  Windows until now. Fixed: Windows now queries running processes via WMI
+  (`Get-WmiObject Win32_Process`, matching this project's existing
+  PowerShell-invocation pattern), filtered to `zfs.exe` processes whose
+  command line contains `send`/`receive`/`recv` -- the same
+  which-command-is-this filtering `pgrep -f "[z]fs send"` etc. already does
+  on Unix. To avoid spawning a `powershell.exe` process on every daemon tick
+  (default `interval`: 5s), the Windows result is cached for 30s and
+  refreshed lazily; every one-shot invocation (`sleepnow`/`sleeppool`/
+  `export-now`) still always starts as a fresh process with an empty cache,
+  so those always see a real, uncached check -- only the long-running daemon
+  loop benefits from (and needs) the caching. In practice this matters most
+  for backup-pool export (`sleeppool --export`/`export-now`, including a
+  scheduled forced export): an active pool's own idle/`verify-idle`
+  requirement already tends to keep it from sleeping while replication I/O
+  is ongoing, but export is a directed action that does not wait for idle,
+  so this guard is its main protection on Windows.
+
 ## v1.1.0-rc4 (2026-08-20) — Release Candidate
 
 Documentation/consistency fixes found while auditing the README against the

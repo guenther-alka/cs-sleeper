@@ -16,7 +16,7 @@ import (
 
 // version is the release version; set at build time via
 // -ldflags "-X main.version=..." when tagging a release.
-var version = "1.1.0-rc4"
+var version = "1.1.0-rc5"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -56,7 +56,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Println(`cs-sleeper -- spin down idle ZFS pool disks (v1.1.0-rc4)
+	fmt.Println(`cs-sleeper -- spin down idle ZFS pool disks (v1.1.0-rc5)
 
 Usage:
   cs-sleeper daemon [--config PATH] [--foreground] [--once]
