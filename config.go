@@ -64,6 +64,17 @@ type Config struct {
 	// part of any named pool) always use Activity -- they have no pool to
 	// key a per-pool window by.
 	PoolWindow map[string][]MinWindow
+
+	// ActiveTimetable is the HH:MM-granularity successor to Activity
+	// (which only has hour granularity): the global allow-sleep window
+	// applied to every disk that has no PoolWindow override -- exactly
+	// the same role Activity plays, just finer-grained. When non-empty
+	// it takes priority over Activity; Activity itself is kept only as
+	// a legacy fallback for hand-edited config files that still use the
+	// old hour-only syntax (see SleepAllowed below), and is no longer
+	// written by csweb-gui's own Settings form as of the ActiveTimetable
+	// UI round.
+	ActiveTimetable []MinWindow
 }
 
 // InWindow reports whether the given hour is inside any activity window.
@@ -74,6 +85,18 @@ func (c *Config) InWindow(h int) bool {
 		}
 	}
 	return false
+}
+
+// SleepAllowed reports whether sleep is allowed for the global (non-
+// PoolWindow-overridden) case at time t: ActiveTimetable, when set, takes
+// priority over the legacy hour-granularity Activity field entirely (not
+// merged with it) -- a config using the new HH:MM field is fully switched
+// over, not layering two independent timetables on top of each other.
+func (c *Config) SleepAllowed(t time.Time) bool {
+	if len(c.ActiveTimetable) > 0 {
+		return !inAnyMinWindow(c.ActiveTimetable, minOfDay(t))
+	}
+	return !c.InWindow(t.Hour())
 }
 
 // MinWindow is a daily minute-of-day range (0-1439); End may be < Start to
@@ -250,6 +273,12 @@ func parseConfig(text string, c *Config) error {
 				return fmt.Errorf("config line %d: %v", lineNo, err)
 			}
 			c.PoolWindow = pw
+		case "active-timetable":
+			ws, err := parseHHMMWindows(val)
+			if err != nil {
+				return fmt.Errorf("config line %d: %v", lineNo, err)
+			}
+			c.ActiveTimetable = ws
 		default:
 			return fmt.Errorf("config line %d: unknown key %q", lineNo, key)
 		}
@@ -274,6 +303,9 @@ func validateConfig(c *Config) error {
 	}
 	if err := validateNoOverlap(c.ExportTimetable); err != nil {
 		return fmt.Errorf("export-timetable: %v", err)
+	}
+	if err := validateNoOverlap(c.ActiveTimetable); err != nil {
+		return fmt.Errorf("active-timetable: %v", err)
 	}
 	for _, p := range c.ExportPools {
 		if !pools[p] {
@@ -418,6 +450,7 @@ func marshalConfig(c *Config) []byte {
 	fmt.Fprintf(&b, "exclude      = %s\n", strings.Join(c.Exclude, ","))
 	fmt.Fprintf(&b, "pools        = %s\n", strings.Join(c.Pools, ","))
 	fmt.Fprintf(&b, "activity     = %s\n", windowsStr(c.Activity))
+	fmt.Fprintf(&b, "active-timetable = %s\n", formatMinWindows(c.ActiveTimetable))
 	fmt.Fprintf(&b, "wait         = %d\n", c.Wait)
 	fmt.Fprintf(&b, "interval     = %d\n", c.Interval)
 	fmt.Fprintf(&b, "policy       = %s\n", c.Policy)

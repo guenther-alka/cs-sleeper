@@ -16,7 +16,7 @@ import (
 
 // version is the release version; set at build time via
 // -ldflags "-X main.version=..." when tagging a release.
-var version = "1.1.0-rc6"
+var version = "1.1.0-rc7"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -56,7 +56,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Println(`cs-sleeper -- spin down idle ZFS pool disks (v1.1.0-rc6)
+	fmt.Println(`cs-sleeper -- spin down idle ZFS pool disks (v1.1.0-rc7)
 
 Usage:
   cs-sleeper daemon [--config PATH] [--foreground] [--once]
@@ -91,7 +91,8 @@ Config:
   pools      = pool1,pool2 # pools whose disks are managed (via zpool status)
   disks      = sda,ada0   # additional free disks to manage directly
   exclude    =            # disks to never touch
-  activity   = 12-14,18-6 # I/O windows; sleep is allowed OUTSIDE them
+  activity   = 12-14,18-6 # legacy hour-only windows; still accepted, superseded below
+  active-timetable = 06:00-22:00       # HH:MM-HH:MM,...; preferred over activity when set
   wait       = 600        # seconds idle before a disk sleeps
   interval   = 5          # sampling interval (seconds)
   policy     = standby    # sleep policy (standby)

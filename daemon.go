@@ -70,13 +70,14 @@ func daemonCmd(args []string) {
 		VerifyIdle: cfg.VerifyIdle,
 		TrackWake:  cfg.Wake == "on-access",
 		// A disk whose pool has its own PoolWindow uses that instead of
-		// the global Activity window; everything else (free disks, or a
-		// pool with no override) keeps the original global-only behavior.
+		// the global window; everything else (free disks, or a pool with
+		// no override) uses SleepAllowed -- ActiveTimetable (HH:MM) if
+		// set, else the legacy hour-granularity Activity field.
 		AllowSleep: func(d string, t time.Time) bool {
 			if ws, ok := cfg.PoolWindow[devicePool[d]]; ok && devicePool[d] != "" {
 				return !inAnyMinWindow(ws, minOfDay(t))
 			}
-			return !cfg.InWindow(t.Hour())
+			return cfg.SleepAllowed(t)
 		},
 	}
 	engine := sleeper.NewEngine(devices, opt)

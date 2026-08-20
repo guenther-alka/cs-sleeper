@@ -3,6 +3,26 @@
 All notable changes to cs-sleeper are documented here. Versions follow
 `v<major>.<minor>.<patch>`; see the git tags for the full history.
 
+## v1.1.0-rc7 (2026-08-20) — Release Candidate
+
+New feature (config-only, backward compatible):
+
+- **`active-timetable`**, an HH:MM-granularity successor to the legacy
+  hour-only `activity` field. Same role -- the global allow-sleep window
+  for every disk that has no `pool-window` override -- just finer
+  grained, matching `export-timetable`'s own HH:MM syntax (same
+  `parseHHMMWindows`/`formatMinWindows` helpers, same overlap
+  validation). When set, `active-timetable` takes over completely from
+  `activity` (not merged with it) via the new `Config.SleepAllowed(t
+  time.Time) bool` method, which `daemon.go`'s `AllowSleep` closure now
+  calls instead of `InWindow(t.Hour())` directly. `activity` itself is
+  unchanged and still fully functional -- kept as the fallback for
+  hand-edited configs that still use the old hour-only syntax; it is
+  simply no longer the field csweb-gui's own Settings form writes to.
+- New tests: `SleepAllowed` prefers `active-timetable` over `activity`
+  when both are set; `active-timetable` overlap validation;
+  `active-timetable` config-key parsing.
+
 ## v1.1.0-rc6 (2026-08-20) — Release Candidate
 
 New feature (config-only, backward compatible -- existing configs behave

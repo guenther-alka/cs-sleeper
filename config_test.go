@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestMinWindowActive(t *testing.T) {
 	same := MinWindow{Start: 7 * 60, End: 19 * 60} // 07:00-19:00
@@ -147,5 +150,48 @@ func TestParseConfigExportAndWindowKeys(t *testing.T) {
 	bad := "pools = tank\nexport-pools = backup\nexport-timetable = 07:00-19:00\n"
 	if err := parseConfig(bad, defaultConfig()); err == nil {
 		t.Fatal("expected validation error for export-pools referencing an unknown pool")
+	}
+}
+
+func TestSleepAllowedPrefersActiveTimetable(t *testing.T) {
+	// 10:00 -- inside the legacy hour-only activity window (9-17), and
+	// outside the new active-timetable window (12:00-14:00).
+	at := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+
+	legacyOnly := &Config{Activity: []Window{{9, 17}}}
+	if legacyOnly.SleepAllowed(at) {
+		t.Fatal("legacy activity window should refuse sleep at 10:00 (9-17)")
+	}
+
+	// active-timetable set -> takes over completely, activity is ignored,
+	// so 10:00 (outside 12:00-14:00) now allows sleep.
+	withTimetable := &Config{
+		Activity:        []Window{{9, 17}},
+		ActiveTimetable: []MinWindow{{12 * 60, 14 * 60}},
+	}
+	if !withTimetable.SleepAllowed(at) {
+		t.Fatal("active-timetable should take priority over activity and allow sleep at 10:00")
+	}
+	inWindow := time.Date(2026, 1, 1, 13, 0, 0, 0, time.UTC)
+	if withTimetable.SleepAllowed(inWindow) {
+		t.Fatal("active-timetable should refuse sleep at 13:00 (inside 12:00-14:00)")
+	}
+}
+
+func TestValidateConfigActiveTimetableOverlap(t *testing.T) {
+	c := &Config{ActiveTimetable: []MinWindow{{7 * 60, 19 * 60}, {15 * 60, 20 * 60}}}
+	if err := validateConfig(c); err == nil {
+		t.Fatal("expected overlap error for active-timetable")
+	}
+}
+
+func TestParseConfigActiveTimetableKey(t *testing.T) {
+	text := "active-timetable = 06:00-22:00\n"
+	c := defaultConfig()
+	if err := parseConfig(text, c); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.ActiveTimetable) != 1 || c.ActiveTimetable[0] != (MinWindow{6 * 60, 22 * 60}) {
+		t.Fatalf("ActiveTimetable: got %v", c.ActiveTimetable)
 	}
 }
