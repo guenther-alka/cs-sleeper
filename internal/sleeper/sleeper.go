@@ -86,6 +86,37 @@ func (e *Engine) Update(active map[string]bool, now time.Time) (sleep []string, 
 	return sleep, woke
 }
 
+// MarkSleepResult records the outcome of an actual sleep attempt for device,
+// as issued by the caller after Update() returned it in its sleep slice.
+//
+// Update() optimistically sets Sleeping=true the moment it DECIDES a device
+// should sleep, before the caller has run the real smartctl command (or
+// skipped it, e.g. because a zfs send/receive was in flight) -- Sleeping is
+// only reverted here, on a confirmed failure. Without this call, a device
+// whose smartctl invocation fails (wrong device path, unsupported hardware,
+// permission error, transient I/O error, etc.) would be reported as
+// "sleeping" in Snapshot()/state.json forever, even though it never actually
+// went to standby. This was confirmed live: on illumos, a device-path bug
+// fed smartctl an unopenable path, smartctl failed every time, and the
+// state.json/UI "Sleeping" column lied regardless.
+//
+// On success, Sleeping stays true (as Update() already set it) and nothing
+// else changes. On failure, Sleeping is reverted to false and the idle
+// timer is restarted from now with a fresh verify countdown, so the engine
+// waits a full Options.Wait + Options.VerifyIdle cycle before retrying
+// instead of retrying every sample tick (which would spam the log/command
+// on a persistently-failing device) or lying about the device's state
+// indefinitely.
+func (e *Engine) MarkSleepResult(device string, success bool, now time.Time) {
+	d, ok := e.disks[device]
+	if !ok || success {
+		return
+	}
+	d.Sleeping = false
+	d.IdleSince = now
+	d.verify = e.opt.VerifyIdle
+}
+
 // Snapshot returns a copy of the current per-disk state.
 func (e *Engine) Snapshot() []Disk {
 	out := make([]Disk, 0, len(e.disks))

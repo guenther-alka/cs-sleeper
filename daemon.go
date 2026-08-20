@@ -125,13 +125,21 @@ func daemonCmd(args []string) {
 		for _, d := range sleepNow {
 			if rep.Active {
 				logger.Printf("refusing to sleep %s: zfs send/receive in flight", d)
+				// Update() already flagged d as Sleeping optimistically; we
+				// never even attempted the smartctl command, so revert that
+				// and make the engine wait a full cycle before trying again.
+				engine.MarkSleepResult(d, false, now)
 				continue
 			}
 			out, err := sleeper.Sleep(d)
 			if err != nil {
 				logger.Printf("sleep %s failed: %v (%s)", d, err, strings.TrimSpace(out))
+				// Same optimistic-flag correction: the command failed, so
+				// state.json must not keep reporting d as asleep.
+				engine.MarkSleepResult(d, false, now)
 			} else {
 				logger.Printf("sleep %s -> standby (%s)", d, strings.TrimSpace(out))
+				engine.MarkSleepResult(d, true, now)
 			}
 		}
 
